@@ -12,6 +12,11 @@ on:
 permissions:
   contents: write              # 状態をdataブランチへ書き戻すため
 
+# ランナーは既定でUTC。そのままだとローカル実行(JST)のログと混ざり、
+# 同じCSVに9時間ずれた時刻が並んでグラフの時間軸が壊れる。
+env:
+  TZ: Asia/Tokyo
+
 # 同時に2つ走ると同じ状態を奪い合うので直列化する
 concurrency:
   group: live-trade
