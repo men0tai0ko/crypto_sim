@@ -22,11 +22,19 @@
     --bad: #d03b3b;
     --warn: #fab219;
     /* 見た目の奥行き用。データの色ではないので配色検証の対象外 */
-    --glow: rgba(42,120,214,0.07);
-    --shadow: 0 1px 2px rgba(11,11,11,.04), 0 8px 24px -12px rgba(11,11,11,.10);
-    --badge-bg: rgba(11,11,11,.02);
-    --pill-bg: rgba(11,11,11,.02);
-    --row-hover: rgba(11,11,11,.025);
+    --shadow: 0 1px 2px rgba(11,11,11,.04), 0 10px 30px -14px rgba(11,11,11,.16);
+    --glass: rgba(255,255,255,.72);
+    --glass-border: rgba(11,11,11,.09);
+    --edge: rgba(11,11,11,.16);
+    --badge-bg: rgba(255,255,255,.5);
+    --pill-bg: rgba(255,255,255,.55);
+    --row-hover: rgba(42,120,214,.045);
+    /* 背景のオーロラ。3色を淡く重ねて平坦な単色から抜け出させる */
+    --aurora-1: rgba(42,120,214,.16);
+    --aurora-2: rgba(232,123,164,.11);
+    --aurora-3: rgba(27,175,122,.10);
+    /* ヒーロー数値のグラデーション。両端とも背景に対し7:1以上を確保した色 */
+    --ink-grad: #1c5cab;
     /* 選択中ボタン。青ランプの濃い段に白文字で 7.5:1 を確保する
        （明るい青に白文字だと12pxの文字には足りない） */
     --btn-on-bg: #1c5cab;
@@ -48,11 +56,17 @@
       --series-soft: rgba(57,135,229,0.16);
       --good: #0ca30c;
       --bad: #d03b3b;
-      --glow: rgba(57,135,229,0.10);
-      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.8);
-      --badge-bg: rgba(255,255,255,.03);
-      --pill-bg: rgba(255,255,255,.03);
-      --row-hover: rgba(255,255,255,.035);
+      --shadow: 0 1px 2px rgba(0,0,0,.5), 0 16px 40px -18px rgba(0,0,0,.9);
+      --glass: rgba(38,38,40,.55);
+      --glass-border: rgba(255,255,255,.09);
+      --edge: rgba(255,255,255,.22);
+      --badge-bg: rgba(255,255,255,.05);
+      --pill-bg: rgba(255,255,255,.05);
+      --row-hover: rgba(57,135,229,.09);
+      --aurora-1: rgba(57,135,229,.22);
+      --aurora-2: rgba(213,81,129,.14);
+      --aurora-3: rgba(25,158,112,.13);
+      --ink-grad: #9ec5f4;
       /* 暗い面では明るい青に暗い文字を載せる方がコントラストが取れる */
       --btn-on-bg: #3987e5;
       --btn-on-fg: #0b0b0b;
@@ -60,14 +74,20 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 26px 20px 40px;
+    margin: 0; padding: 30px 20px 44px;
     background: var(--page); color: var(--ink);
     font-family: system-ui, -apple-system, "Segoe UI", "Yu Gothic UI", sans-serif;
     font-size: 14px; line-height: 1.6;
     -webkit-font-smoothing: antialiased;
-    /* 上端にごく淡い光を置いて、平坦な単色から抜け出させる */
-    background-image: radial-gradient(120% 70% at 50% -20%, var(--glow) 0%, transparent 60%);
-    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  /* 背景のオーロラ。固定して、スクロールしても光の位置が動かないようにする */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(58% 42% at 12% -4%, var(--aurora-1), transparent 68%),
+      radial-gradient(48% 38% at 88% 4%, var(--aurora-2), transparent 68%),
+      radial-gradient(72% 46% at 50% 104%, var(--aurora-3), transparent 68%);
   }
   .wrap { max-width: 1140px; margin: 0 auto; }
 
@@ -94,6 +114,7 @@
   /* 状態は色（点と枠）で示し、文字は読める色に保つ。
      状態色そのものを文字にすると明るい面で3.1:1まで落ちる。 */
   .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--state); flex: none; }
+  .badge { box-shadow: 0 0 20px -6px var(--state); }
   .badge.on { --state: var(--good); }
   .badge.on .dot { animation: pulse 2.4s ease-in-out infinite; }
   .badge.off { --state: var(--bad); }
@@ -103,11 +124,21 @@
   }
   @media (prefers-reduced-motion: reduce) { .badge.on .dot { animation: none; } }
 
+  /* ガラス質のカード。背景のオーロラを透かして奥行きを出す */
   .card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 14px; padding: 18px 20px; margin-top: 14px;
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid var(--glass-border);
+    border-radius: 18px; padding: 20px 22px; margin-top: 14px;
     box-shadow: var(--shadow);
     position: relative;
+  }
+  /* 上辺のハイライト。ガラスの縁の反射に見せる */
+  .card::after {
+    content: ""; position: absolute; left: 18px; right: 18px; top: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--edge), transparent);
+    pointer-events: none;
   }
   /* 見出しは小さく、頭に短い線を置いて区切りを作る */
   h2 {
@@ -124,9 +155,15 @@
   .hero .label { color: var(--ink2); font-size: 11px; letter-spacing: .06em; font-weight: 600; }
   .hero .value {
     /* 桁が増えても狭い画面で溢れないよう可変にする（1,000万円台まで想定） */
-    font-size: clamp(32px, 8.5vw, 46px);
-    font-weight: 700; line-height: 1.05; letter-spacing: -.025em;
+    font-size: clamp(32px, 8.5vw, 54px);
+    font-weight: 750; line-height: 1.02; letter-spacing: -.03em;
     font-variant-numeric: tabular-nums; margin-top: 2px;
+    /* 画面の主役。グラデーションで視線を集める。
+       両端とも背景に対し7:1以上あり、clip非対応でも色は残る */
+    color: var(--ink);
+    background: linear-gradient(118deg, var(--ink) 30%, var(--ink-grad));
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
   .hero .delta {
     font-size: 21px; font-weight: 700; letter-spacing: -.01em;
@@ -144,8 +181,9 @@
 
   /* 相場判断のカードは、いまのレジームの色を左端に帯として出す */
   #regimecard::before {
-    content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px;
+    content: ""; position: absolute; left: 0; top: 16px; bottom: 16px; width: 3px;
     border-radius: 0 3px 3px 0; background: var(--regime-color, var(--axis));
+    box-shadow: 0 0 18px -1px var(--regime-color, transparent);
   }
   .regime { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .regime .arrow { color: var(--muted); }
@@ -168,16 +206,19 @@
   svg { display: block; width: 100%; }
   .tip {
     position: absolute; pointer-events: none; opacity: 0; transition: opacity .1s;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    padding: 7px 10px; font-size: 12px; white-space: nowrap;
-    box-shadow: 0 4px 14px rgba(0,0,0,.14); z-index: 5;
+    background: var(--surface); border: 1px solid var(--glass-border); border-radius: 12px;
+    padding: 9px 12px; font-size: 12px; white-space: nowrap;
+    box-shadow: 0 8px 28px -8px rgba(0,0,0,.5); z-index: 5;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   }
   .tip .big { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
 
   .warnbar:not(:empty) {
-    margin-top: 12px; padding: 9px 14px; border-radius: 8px; font-size: 13px;
-    background: var(--surface); color: var(--ink);
-    border: 1px solid var(--warn); border-left-width: 4px;
+    margin-top: 14px; padding: 11px 16px; border-radius: 14px; font-size: 13px;
+    background: var(--glass); color: var(--ink);
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+    border: 1px solid var(--warn); border-left-width: 3px;
+    box-shadow: 0 0 26px -12px var(--warn), var(--shadow);
   }
 
   /* 期間フィルタ・操作ボタン */
@@ -192,13 +233,22 @@
   button.on {
     background: var(--btn-on-bg); border-color: var(--btn-on-bg);
     color: var(--btn-on-fg); font-weight: 700;
+    box-shadow: 0 3px 16px -4px var(--btn-on-bg);
   }
   .hbar { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
   .hbar .track { width: 66px; height: 6px; border-radius: 3px; background: var(--grid);
                  overflow: hidden; flex: none; }
   /* display:block が要る。span のままだと幅・高さが効かず 0×0 になって帯が見えない */
-  .hbar .fill { display: block; height: 100%; background: var(--series); border-radius: 3px; }
-  .hbar .fill.reached { background: var(--good); }
+  .hbar .fill {
+    display: block; height: 100%; border-radius: 3px;
+    background: linear-gradient(90deg, var(--series-dim), var(--series));
+    box-shadow: 0 0 10px -2px var(--series);
+    transition: width .35s ease;
+  }
+  .hbar .fill.reached {
+    background: linear-gradient(90deg, var(--good), var(--good));
+    box-shadow: 0 0 10px -2px var(--good);
+  }
   .spark { display: block; }
   .legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
   .legend .lg { display: inline-flex; align-items: center; gap: 6px;
@@ -220,7 +270,14 @@
   tbody tr:hover { background: var(--row-hover); }
   tbody tr:last-child td { border-bottom: none; }
   th:first-child, td:first-child { text-align: left; font-weight: 600; }
-  .empty { color: var(--ink2); padding: 10px 0; }
+  /* 中身が無いカードが縦に間延びしないよう、余白を詰めて中央に置く */
+  .empty {
+    color: var(--ink2); padding: 4px 0; display: flex; align-items: center; gap: 9px;
+  }
+  .empty::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%; flex: none;
+    background: var(--axis);
+  }
   .errline {
     font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
     font-size: 12px; color: var(--ink2); padding: 5px 0;
@@ -653,7 +710,18 @@ function drawChart(fullCurve, capital) {
   const X = i => m.l + (curve.length === 1 ? iw / 2 : i / (curve.length - 1) * iw);
   const Y = v => m.t + (1 - (v - lo) / (hi - lo)) * ih;
 
-  let g = "";
+  // 面の塗りは上だけ濃く、下に向けて消す。平坦な線でも青一色の塊にならない
+  let g = `<defs>
+    <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="var(--series)" stop-opacity="0.34"/>
+      <stop offset="55%"  stop-color="var(--series)" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="var(--series)" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="lineGlow" x="-20%" y="-40%" width="140%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>`;
   // 横罫線と目盛り
   for (let i = 0; i <= 3; i++) {
     const v = lo + (hi - lo) * i / 3, y = Y(v);
@@ -672,7 +740,9 @@ function drawChart(fullCurve, capital) {
   const pts = curve.map((p, i) => [X(i), Y(p.equity)]);
   const line = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
   g += `<path d="${line} L ${pts[pts.length-1][0].toFixed(1)} ${m.t+ih} L ${pts[0][0].toFixed(1)} ${m.t+ih} Z"
-         fill="var(--series-soft)"/>`;
+         fill="url(#areaGrad)"/>`;
+  g += `<path d="${line}" fill="none" stroke="var(--series)" stroke-width="2"
+         stroke-linejoin="round" stroke-linecap="round" filter="url(#lineGlow)" opacity="0.5"/>`;
   g += `<path d="${line}" fill="none" stroke="var(--series)" stroke-width="2"
          stroke-linejoin="round" stroke-linecap="round"/>`;
 
