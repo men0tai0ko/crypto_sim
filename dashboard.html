@@ -670,7 +670,7 @@ function renderStats(st) {
   const box = document.getElementById("stats");
   if (!st || !st.count) {
     box.innerHTML = '<div class="empty">まだ決済がありません。'
-      + '（買っただけの含み損益は上の「保有ポジション」を見てください）</div>';
+      + '（売って初めて確定します。保有中の含み損益は上の「資産の内訳」を見てください）</div>';
     return;
   }
   const jp = v => (v >= 0 ? "+" : "") + Math.round(v).toLocaleString("ja-JP") + "円";
