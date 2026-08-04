@@ -299,6 +299,27 @@
   tbody tr:hover { background: var(--row-hover); }
   tbody tr:last-child td { border-bottom: none; }
   th:first-child, td:first-child { text-align: left; font-weight: 600; }
+  /* 列の出し分け。狭い画面で横スクロールさせるより、判断に効かない列から順に隠す。
+     残す優先度: 銘柄・現在値・点灯まで・状態 ＞ 推移・前日比・ストップ ＞ 移動平均比・水準 */
+  @media (max-width: 1080px) { .c-level { display: none; } }
+  @media (max-width: 900px)  { .c-ma    { display: none; } }
+  @media (max-width: 720px)  { .c-spark { display: none; } }
+  /* ストップ価格は保有ポジション表にも出るので、狭い画面ではこちらを落とす */
+  @media (max-width: 560px)  { .c-chg, .c-stop { display: none; } }
+  /* 列を削っても表が器に収まらないので、狭い画面では詰める。
+     銘柄コード(BTC-JPY)は名前があれば無くても分かるため落とす。 */
+  @media (max-width: 720px) {
+    th, td { padding: 8px 7px; }
+    .hbar { gap: 6px; }
+    .hbar .track { width: 34px; }
+    #universe td:first-child .sub { display: none; }
+  }
+  /* さらに狭い場合。720pxのブロックより後に置くこと（同じ指定は後勝ち） */
+  @media (max-width: 480px) {
+    th, td { padding: 8px 4px; }
+    .hbar .track { width: 26px; }
+  }
+
   /* 中身が無いカードが縦に間延びしないよう、余白を詰めて中央に置く */
   .empty {
     color: var(--ink2); padding: 4px 0; display: flex; align-items: center; gap: 9px;
@@ -597,20 +618,23 @@ function renderUniverse(k) {
                 : '<span class="sub">待機</span>');
     return `<tr>
       <td>${r.name}<span class="sub"> ${r.symbol}</span></td>
-      <td>${sparkline(r.spark)}</td>
+      <td class="c-spark">${sparkline(r.spark)}</td>
       <td>${num(r.price, dec(r.price))}</td>
-      <td class="${cls(r.change_pct)}">${signed(r.change_pct)}</td>
-      <td class="${cls(r.vs_ma50_pct)}">${signed(r.vs_ma50_pct, 1)}</td>
-      <td class="${cls(r.vs_ma200_pct)}">${signed(r.vs_ma200_pct, 1)}</td>
-      <td>${r.signal_level === null ? "—" : num(r.signal_level, dec(r.signal_level))}</td>
+      <td class="c-chg ${cls(r.change_pct)}">${signed(r.change_pct)}</td>
+      <td class="c-ma ${cls(r.vs_ma50_pct)}">${signed(r.vs_ma50_pct, 1)}</td>
+      <td class="c-ma ${cls(r.vs_ma200_pct)}">${signed(r.vs_ma200_pct, 1)}</td>
+      <td class="c-level">${r.signal_level === null ? "—" : num(r.signal_level, dec(r.signal_level))}</td>
       <td>${gapBar(r.signal_gap_pct)}</td>
-      <td>${r.stop ? num(r.stop, dec(r.stop)) : "—"}</td>
+      <td class="c-stop">${r.stop ? num(r.stop, dec(r.stop)) : "—"}</td>
       <td>${state}</td>
     </tr>`;
   }).join("");
   box.innerHTML = `<table><thead><tr>
-      <th scope="col">銘柄</th><th>30日推移</th><th>現在値</th><th>前日比</th><th>50日線比</th><th>200日線比</th>
-      <th>${u[0].signal_label || "シグナル水準"}</th><th>点灯まで</th><th>ストップ</th><th>状態</th>
+      <th scope="col">銘柄</th><th scope="col" class="c-spark">30日推移</th>
+      <th scope="col">現在値</th><th scope="col" class="c-chg">前日比</th>
+      <th scope="col" class="c-ma">50日線比</th><th scope="col" class="c-ma">200日線比</th>
+      <th scope="col" class="c-level">${u[0].signal_label || "シグナル水準"}</th>
+      <th scope="col">点灯まで</th><th scope="col" class="c-stop">ストップ</th><th scope="col">状態</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   note.textContent = `「${u[0].signal_label || "—"}」は現在の戦略「${k.strategy}」の`
     + `エントリー条件。相場付きが変わると基準そのものが切り替わります。`
@@ -739,16 +763,17 @@ function renderTrades(trades) {
       <td>${t.t}</td>
       <td>${t.symbol}</td>
       <td>${t.side}</td>
-      <td>${num(t.price, dec(t.price))}</td>
+      <td class="c-level">${num(t.price, dec(t.price))}</td>
       <td>${yen(t.amount)}</td>
       <td class="${t.realized === null ? "" : cls(t.realized)}">${
         t.realized === null ? "—"
         : (t.realized >= 0 ? "+" : "") + Math.round(t.realized).toLocaleString("ja-JP") + "円"}</td>
-      <td>${t.reason}</td>
+      <td class="c-chg">${t.reason}</td>
     </tr>`).join("");
   box.innerHTML = `<table><thead><tr>
-      <th>日時</th><th>銘柄</th><th>売買</th><th>約定単価</th>
-      <th>金額</th><th>実現損益</th><th>理由</th>
+      <th scope="col">日時</th><th scope="col">銘柄</th><th scope="col">売買</th>
+      <th scope="col" class="c-level">約定単価</th><th scope="col">金額</th>
+      <th scope="col">実現損益</th><th scope="col" class="c-chg">理由</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
