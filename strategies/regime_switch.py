@@ -31,7 +31,7 @@ class RegimeSwitching(Strategy):
 
     def __init__(self, max_weight: float = MAX_WEIGHT,
                  atr_mult: float = ATR_MULT, use_stop: bool = True,
-                 cooldown: int = 0):
+                 cooldown: int = regime_mod.COOLDOWN_DAYS):
         self.max_weight = max_weight
         self.atr_mult = atr_mult
         self.use_stop = use_stop

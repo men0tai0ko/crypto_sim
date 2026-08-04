@@ -34,7 +34,7 @@ import json
 import os
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -58,7 +58,8 @@ MAX_ERRORS = 30            # 連続エラーがこの回数を超えたら諦め
 CAPITAL = 1_000_000        # 元手（円）
 ATR_N = 14
 ATR_MULT = 3.0             # トレーリングストップの幅（ATRの何倍か）
-MAX_WEIGHT = regime_mod.MAX_WEIGHT   # 1銘柄あたりの上限（regime.py に一元化）
+MAX_WEIGHT = regime_mod.MAX_WEIGHT       # 1銘柄あたりの上限（regime.py に一元化）
+COOLDOWN_DAYS = regime_mod.COOLDOWN_DAYS # ストップ後に買い直さない日数（同上）
 DEFAULT_INTERVAL = 300     # 5分
 
 # regime.py が返す戦略キー -> 実際の戦略
@@ -171,12 +172,14 @@ class LiveTrader:
             self.peaks = {k: float(v) for k, v in s.get("peaks", {}).items()}
             self.targets = {k: float(v) for k, v in s.get("targets", {}).items()}
             self.stopped = set(s.get("stopped", []))
+            self.cooldown = dict(s.get("cooldown", {}))   # 銘柄 -> 再エントリー解禁日
             self.last_plan_date = s.get("last_plan_date")
             self.started = s.get("started")
             self.peak_equity = float(s.get("peak_equity", CAPITAL))
         else:
             self.broker = Broker(cash=float(CAPITAL))
             self.peaks, self.targets, self.stopped = {}, {}, set()
+            self.cooldown = {}
             self.last_plan_date = None
             self.started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.peak_equity = float(CAPITAL)
@@ -188,6 +191,7 @@ class LiveTrader:
             "peaks": self.peaks,
             "targets": self.targets,
             "stopped": sorted(self.stopped),
+            "cooldown": self.cooldown,
             "last_plan_date": self.last_plan_date,
             "started": self.started,
             "peak_equity": self.peak_equity,
@@ -234,6 +238,11 @@ class LiveTrader:
         if isinstance(strat, DonchianTrend):
             self.peaks = {s: v["peak"] for s, v in strat.state.items()}
 
+        # ストップで切った直後の銘柄は買い直さない（往復売買を避ける）
+        today = str(datetime.now().date())
+        self.cooldown = {s: d for s, d in self.cooldown.items() if d > today}
+        raw = {s: w for s, w in raw.items() if s not in self.cooldown}
+
         raw = {s: min(w, MAX_WEIGHT) for s, w in raw.items()}   # 1銘柄への集中を抑える
         total = sum(raw.values())
         cap = reg["上限"]
@@ -264,6 +273,9 @@ class LiveTrader:
             if p <= stop:
                 eff[sym] = 0.0
                 self.stopped.add(sym)
+                # 解禁日を記録。ここが唯一クールダウンを開始する場所
+                until = datetime.now().date() + timedelta(days=COOLDOWN_DAYS)
+                self.cooldown[sym] = str(until)
         for sym in self.stopped:
             eff[sym] = 0.0
         return eff
@@ -314,6 +326,7 @@ class LiveTrader:
                 "atr": a if a == a else None,
                 "held": sym in self.broker.positions,
                 "stop": self.stops.get(sym) if sym in self.broker.positions else None,
+                "cooldown_until": self.cooldown.get(sym),
                 # 一覧にスパークラインを描くための直近30日の終値。
                 # 数字の羅列より「どういう形で下げているか」が一目で分かる。
                 "spark": [float(v) for v in c.iloc[-30:]],

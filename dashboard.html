@@ -341,10 +341,16 @@ function renderUniverse(k) {
   }
   const rows = u.map(r => {
     const near = r.signal_gap_pct !== null && r.signal_gap_pct <= 0;
+    // クールダウン中は「シグナルが出ても買わない」状態。
+    // 理由が見えないと「壊れている」と誤解されるので明示する。
+    const cool = !r.held && r.cooldown_until && daysUntil(r.cooldown_until) > 0;
     const state = r.held
       ? '<span class="pill" style="border-color:var(--good);color:var(--good)">保有中</span>'
-      : (near ? '<span class="pill" style="border-color:var(--warn)">条件充足</span>'
-              : '<span class="sub">待機</span>');
+      : cool
+        ? `<span class="pill" style="border-color:var(--warn)" title="ストップ後の再エントリー禁止期間">`
+          + `見送り あと${daysUntil(r.cooldown_until)}日</span>`
+        : (near ? '<span class="pill" style="border-color:var(--warn)">条件充足</span>'
+                : '<span class="sub">待機</span>');
     return `<tr>
       <td>${r.name}<span class="sub"> ${r.symbol}</span></td>
       <td>${sparkline(r.spark)}</td>
@@ -385,6 +391,13 @@ function sparkline(vals, w = 92, h = 26) {
 
 /* 点灯までの距離。銘柄間の相対値ではなく固定基準にして、
    他の銘柄が動いてもバーの意味が変わらないようにする */
+// 解禁日まであと何日か（当日は0日＝解禁済み扱い）
+function daysUntil(dateStr) {
+  const d = new Date(dateStr.replace(/-/g, "/"));
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.ceil((d - today) / 86400000));
+}
+
 const GAP_REF = 30;
 function gapBar(gap) {
   if (gap === null || gap === undefined) return "—";
