@@ -106,15 +106,24 @@ def _trade_stats() -> dict:
     今の評価額より「これまで勝てているか」が判断材料になる。
     """
     realized = []
+    by_symbol: dict[str, dict] = {}
     for r in _read_csv(lt.TRADES_LOG):
         if r.get("売買") != "売" or not r.get("実現損益(円)"):
             continue
         try:
-            realized.append(float(str(r["実現損益(円)"]).replace(",", "")))
+            v = float(str(r["実現損益(円)"]).replace(",", ""))
         except ValueError:
             continue
+        realized.append(v)
+        # 銘柄ごとの実績。どの通貨で勝てているかは全体の合計では分からない
+        s = by_symbol.setdefault(r.get("銘柄", "?"),
+                                 {"symbol": r.get("銘柄", "?"), "realized": 0.0,
+                                  "count": 0, "wins": 0})
+        s["realized"] += v
+        s["count"] += 1
+        s["wins"] += 1 if v > 0 else 0
     if not realized:
-        return {"count": 0}
+        return {"count": 0, "by_symbol": []}
     wins = [v for v in realized if v > 0]
     losses = [v for v in realized if v <= 0]
     gross_win, gross_loss = sum(wins), -sum(losses)
@@ -128,6 +137,7 @@ def _trade_stats() -> dict:
         "profit_factor": (gross_win / gross_loss) if gross_loss > 0 else None,
         "best": max(realized),
         "worst": min(realized),
+        "by_symbol": sorted(by_symbol.values(), key=lambda s: -s["realized"]),
     }
 
 

@@ -39,6 +39,13 @@
        （明るい青に白文字だと12pxの文字には足りない） */
     --btn-on-bg: #1c5cab;
     --btn-on-fg: #ffffff;
+    /* 銘柄の色。カテゴリ配色の1〜4番を順番どおりに使う。
+       隣り合わせの検証済みの並びなので、積み上げバーで区別がつく。 */
+    --sym-1: #2a78d6;   /* BTC */
+    --sym-2: #eb6834;   /* ETH */
+    --sym-3: #1baf7a;   /* XRP */
+    --sym-4: #eda100;   /* SOL */
+    --cash: #c3c2b7;    /* 現金は無彩色にして銘柄と混同させない */
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -70,6 +77,11 @@
       /* 暗い面では明るい青に暗い文字を載せる方がコントラストが取れる */
       --btn-on-bg: #3987e5;
       --btn-on-fg: #0b0b0b;
+      --sym-1: #3987e5;
+      --sym-2: #d95926;
+      --sym-3: #199e70;
+      --sym-4: #c98500;
+      --cash: #52514e;
     }
   }
   * { box-sizing: border-box; }
@@ -250,7 +262,20 @@
     box-shadow: 0 0 10px -2px var(--good);
   }
   .spark { display: block; }
-  .legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  /* 資産の内訳バー。区切りは背景色の隙間で作る（線を引かない） */
+  .cbar {
+    display: flex; gap: 2px; height: 30px; border-radius: 8px; overflow: hidden;
+    background: var(--grid);
+  }
+  .cbar .seg { display: block; height: 100%; transition: width .4s ease; }
+  .cbar .seg:first-child { border-radius: 8px 0 0 8px; }
+  .cbar .seg:last-child { border-radius: 0 8px 8px 0; }
+  /* 表の中で銘柄色を示す小さな四角 */
+  .swi {
+    display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+    margin-right: 8px; vertical-align: baseline; flex: none;
+  }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
   .legend .lg { display: inline-flex; align-items: center; gap: 6px;
                 font-size: 12px; color: var(--ink2); }
   .legend .sw { width: 14px; height: 8px; border-radius: 2px; display: inline-block; flex: none; }
@@ -355,8 +380,9 @@
   </div>
 
   <div class="card">
-    <h2>保有ポジション</h2>
-    <div class="scroll"><div id="positions"></div></div>
+    <h2>資産の内訳</h2>
+    <div id="compo"></div>
+    <div class="scroll" style="margin-top:16px"><div id="positions"></div></div>
   </div>
 
   <div class="card">
@@ -423,6 +449,7 @@ function render(s) {
       "--regime-color", REGIME_COLOR[k.regime] || "var(--axis)");
     setText("cap", `エクスポージャー上限 ${k.cap_pct.toFixed(0)}%`);
     setText("reason", "根拠: " + k.reason);
+    renderComposition(k);
     renderPositions(k);
     renderUniverse(k);
     warnIfStale(s, k);
@@ -468,6 +495,47 @@ function warnIfStale(s, k) {
       + `移動平均やATRの集計期間がその日数ぶんずれます。`);
   }
   el.innerHTML = msgs.map(m => `<div>${m}</div>`).join("");
+}
+
+/* 銘柄ごとの固定色。順位ではなく銘柄に色を紐づけるので、
+   保有が入れ替わっても同じ通貨は同じ色のままになる */
+const SYMBOL_COLOR = {
+  "BTC-JPY": "var(--sym-1)",
+  "ETH-JPY": "var(--sym-2)",
+  "XRP-JPY": "var(--sym-3)",
+  "SOL-JPY": "var(--sym-4)",
+};
+const symColor = s => SYMBOL_COLOR[s] || "var(--muted)";
+
+// 現金を含めた全体の内訳。表の構成比だけでは「どれだけ現金で待っているか」が読めない
+function renderComposition(k) {
+  const box = document.getElementById("compo");
+  const eq = k.equity || 0;
+  if (eq <= 0) { box.innerHTML = ""; return; }
+
+  // 並びは保有順ではなく銘柄の定義順に固定する。保有が入れ替わるたびに
+  // 隣り合う色の組が変わると、区別できる保証がなくなるため。
+  const order = Object.keys(SYMBOL_COLOR);
+  const parts = (k.positions || [])
+    .slice()
+    .sort((a, b) => order.indexOf(a.symbol) - order.indexOf(b.symbol))
+    .map(p => ({
+      key: p.symbol, name: p.name, value: p.value,
+      pct: p.value / eq * 100, color: symColor(p.symbol),
+    }));
+  parts.push({ key: "cash", name: "現金", value: k.cash,
+               pct: k.cash / eq * 100, color: "var(--cash)" });
+
+  const segs = parts.filter(p => p.pct > 0.05).map(p =>
+    `<span class="seg" style="width:${p.pct.toFixed(2)}%;background:${p.color}"
+           title="${p.name} ${p.pct.toFixed(1)}%"></span>`).join("");
+
+  const legend = parts.map(p =>
+    `<span class="lg"><span class="sw" style="background:${p.color}"></span>` +
+    `${p.name} <b>${p.pct.toFixed(1)}%</b> <span class="sub">${yen(p.value)}</span></span>`
+  ).join("");
+
+  box.innerHTML = `<div class="cbar">${segs}</div><div class="legend">${legend}</div>`;
 }
 
 function renderPositions(k) {
@@ -620,7 +688,37 @@ function renderStats(st) {
   box.innerHTML = '<div class="stats" style="border-top:none;padding-top:0;margin-top:0">'
     + items.map(([k, v, c]) =>
         `<div class="stat"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join("")
-    + "</div>";
+    + "</div>" + symbolPnl(st.by_symbol);
+}
+
+/* 銘柄別の損益。全体の合計だけでは「どの通貨で勝てているか」が分からない。
+   確定した実現損益と、いま抱えている含み損益を並べる。 */
+function symbolPnl(rows) {
+  if (!rows || !rows.length) return "";
+  const held = {};
+  if (LAST && LAST.snapshot) {
+    (LAST.snapshot.positions || []).forEach(p => { held[p.symbol] = p.upnl; });
+  }
+  const keys = new Set(rows.map(r => r.symbol).concat(Object.keys(held)));
+  const merged = [...keys].map(s => {
+    const r = rows.find(x => x.symbol === s) || { realized: 0, count: 0, wins: 0 };
+    const u = held[s] || 0;
+    return { symbol: s, realized: r.realized, count: r.count, wins: r.wins,
+             unrealized: u, total: r.realized + u };
+  }).sort((a, b) => b.total - a.total);
+
+  const jp = v => (v >= 0 ? "+" : "") + Math.round(v).toLocaleString("ja-JP") + "円";
+  const body = merged.map(m => `<tr>
+      <td><span class="swi" style="background:${symColor(m.symbol)}"></span>${m.symbol}</td>
+      <td class="${cls(m.realized)}">${jp(m.realized)}</td>
+      <td class="${cls(m.unrealized)}">${m.unrealized ? jp(m.unrealized) : "—"}</td>
+      <td class="${cls(m.total)}"><b>${jp(m.total)}</b></td>
+      <td>${m.count ? m.count + "回" : "—"}</td>
+      <td>${m.count ? Math.round(m.wins / m.count * 100) + "%" : "—"}</td>
+    </tr>`).join("");
+  return `<div class="scroll" style="margin-top:18px"><table><thead><tr>
+      <th>銘柄</th><th>実現損益</th><th>含み損益</th><th>合計</th><th>決済</th><th>勝率</th>
+    </tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
 function renderTrades(trades) {
