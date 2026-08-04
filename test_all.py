@@ -11,7 +11,7 @@ import os
 import sys
 import tempfile
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -192,6 +192,48 @@ def _():
         assert "A" in s.targets(Context(panel, 4, b, 1_000_000))
     finally:
         regime_mod.classify = orig
+
+
+@test("現在値の反映で日足を1本余計に増やさない")
+def _():
+    """
+    yfinanceの日足はUTC区切り。ローカル日付で「今日の足」を判定すると
+    日本時間の00:00〜09:00に1日ずれ、実データの上に合成行が積まれる。
+    そうなると前日比が「数分前との比較」になり、指標の集計窓も1本ずれる。
+    """
+    import live_trade as lt
+    utc_today = datetime.now(timezone.utc).date()
+    idx = pd.to_datetime([utc_today - timedelta(days=2),
+                          utc_today - timedelta(days=1),
+                          utc_today])
+    close = pd.DataFrame({"BTC-JPY": [100.0, 110.0, 120.0]}, index=idx)
+    panel = {"open": close.copy(), "high": close * 1.01,
+             "low": close * 0.99, "close": close.copy()}
+
+    trader = lt.LiveTrader.__new__(lt.LiveTrader)     # __init__ は状態を読むので通さない
+    trader.panel = panel
+    out = trader._panel_now({"BTC-JPY": 125.0})
+
+    assert len(out["close"]) == 3, f"行が増えている: {len(out['close'])}本"
+    assert float(out["close"].iloc[-1, 0]) == 125.0, "現在値が反映されていない"
+    # 前日比が「前日の終値」に対して計算されること
+    prev = float(out["close"].iloc[-2, 0])
+    assert prev == 110.0, f"直前の行が前日でない: {prev}"
+
+
+@test("UTCの日付が変わったら新しい足を足す")
+def _():
+    import live_trade as lt
+    utc_today = datetime.now(timezone.utc).date()
+    idx = pd.to_datetime([utc_today - timedelta(days=2), utc_today - timedelta(days=1)])
+    close = pd.DataFrame({"BTC-JPY": [100.0, 110.0]}, index=idx)
+    panel = {"open": close.copy(), "high": close * 1.01,
+             "low": close * 0.99, "close": close.copy()}
+    trader = lt.LiveTrader.__new__(lt.LiveTrader)
+    trader.panel = panel
+    out = trader._panel_now({"BTC-JPY": 125.0})
+    assert len(out["close"]) == 3, "新しい日の足が追加されていない"
+    assert float(out["close"].iloc[-2, 0]) == 110.0
 
 
 # ============================================================

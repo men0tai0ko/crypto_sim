@@ -34,7 +34,7 @@ import json
 import os
 import time
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -212,9 +212,17 @@ class LiveTrader:
         self.panel_date = today
 
     def _panel_now(self, prices: dict) -> dict:
-        """日足パネルの最終行を現在値で上書きした、いま時点のパネル。"""
+        """
+        日足パネルの最終行を現在値で上書きした、いま時点のパネル。
+
+        「今日の足」の判定にはUTCの日付を使う。yfinanceの暗号資産の日足はUTC区切りで、
+        ローカル日付で判定すると日本時間の00:00〜09:00のあいだ1日ずれ、
+        実データの上に合成行が1本余計に積まれてしまう。そうなると前日比が
+        「数分前との比較」になり、移動平均・ATR・ドンチャンの集計窓も1本ずれる。
+        記録の時刻は日本時間のままでよいが、足の同定だけはデータ側の暦に合わせる。
+        """
         panel = {k: v.copy() for k, v in self.panel.items()}
-        today = pd.Timestamp(datetime.now().date())
+        today = pd.Timestamp(datetime.now(timezone.utc).date())
         if panel["close"].index[-1] != today:
             for f in panel:
                 panel[f].loc[today] = panel[f].iloc[-1]
