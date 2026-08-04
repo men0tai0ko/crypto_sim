@@ -16,10 +16,21 @@
     --axis: #c3c2b7;
     --border: rgba(11,11,11,0.10);
     --series: #2a78d6;
+    --series-dim: #86b6ef;
     --series-soft: rgba(42,120,214,0.13);
     --good: #0ca30c;
     --bad: #d03b3b;
     --warn: #fab219;
+    /* 見た目の奥行き用。データの色ではないので配色検証の対象外 */
+    --glow: rgba(42,120,214,0.07);
+    --shadow: 0 1px 2px rgba(11,11,11,.04), 0 8px 24px -12px rgba(11,11,11,.10);
+    --badge-bg: rgba(11,11,11,.02);
+    --pill-bg: rgba(11,11,11,.02);
+    --row-hover: rgba(11,11,11,.025);
+    /* 選択中ボタン。青ランプの濃い段に白文字で 7.5:1 を確保する
+       （明るい青に白文字だと12pxの文字には足りない） */
+    --btn-on-bg: #1c5cab;
+    --btn-on-fg: #ffffff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -33,52 +44,125 @@
       --axis: #383835;
       --border: rgba(255,255,255,0.10);
       --series: #3987e5;
+      --series-dim: #184f95;
       --series-soft: rgba(57,135,229,0.16);
       --good: #0ca30c;
       --bad: #d03b3b;
+      --glow: rgba(57,135,229,0.10);
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.8);
+      --badge-bg: rgba(255,255,255,.03);
+      --pill-bg: rgba(255,255,255,.03);
+      --row-hover: rgba(255,255,255,.035);
+      /* 暗い面では明るい青に暗い文字を載せる方がコントラストが取れる */
+      --btn-on-bg: #3987e5;
+      --btn-on-fg: #0b0b0b;
     }
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 20px;
+    margin: 0; padding: 26px 20px 40px;
     background: var(--page); color: var(--ink);
     font-family: system-ui, -apple-system, "Segoe UI", "Yu Gothic UI", sans-serif;
     font-size: 14px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    /* 上端にごく淡い光を置いて、平坦な単色から抜け出させる */
+    background-image: radial-gradient(120% 70% at 50% -20%, var(--glow) 0%, transparent 60%);
+    background-attachment: fixed;
   }
-  .wrap { max-width: 1100px; margin: 0 auto; }
-  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
-  h1 { font-size: 18px; margin: 0; font-weight: 600; }
-  .sub { color: var(--muted); font-size: 12px; }
+  .wrap { max-width: 1140px; margin: 0 auto; }
+
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 {
+    font-size: 17px; margin: 0; font-weight: 700; letter-spacing: .01em;
+    display: flex; align-items: center; gap: 9px;
+  }
+  /* タイトル脇のアクセント。ページの色の起点になる */
+  h1::before {
+    content: ""; width: 4px; height: 19px; border-radius: 2px; flex: none;
+    background: linear-gradient(180deg, var(--series), var(--series-dim));
+  }
+  /* 小さい文字には --muted (#898781) を使わない。
+     これはグラフの軸ラベル用の色で、明るい面では3.5:1しか出ず本文には足りない。 */
+  .sub { color: var(--ink2); font-size: 12px; }
+
   .badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
-    border: 1px solid var(--border);
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 3px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--state); background: var(--badge-bg);
+    letter-spacing: .02em; color: var(--ink);
   }
-  /* flex: none が無いと、幅が足りないとき丸が潰れて楕円になる */
-  .badge .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
-  .badge.on { color: var(--good); }
-  .badge.off { color: var(--bad); }
+  /* 状態は色（点と枠）で示し、文字は読める色に保つ。
+     状態色そのものを文字にすると明るい面で3.1:1まで落ちる。 */
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--state); flex: none; }
+  .badge.on { --state: var(--good); }
+  .badge.on .dot { animation: pulse 2.4s ease-in-out infinite; }
+  .badge.off { --state: var(--bad); }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--state); opacity: 1; }
+    70%      { box-shadow: 0 0 0 5px transparent; opacity: .55; }
+  }
+  @media (prefers-reduced-motion: reduce) { .badge.on .dot { animation: none; } }
 
   .card {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 16px 18px; margin-top: 14px;
+    border-radius: 14px; padding: 18px 20px; margin-top: 14px;
+    box-shadow: var(--shadow);
+    position: relative;
   }
-  .hero { display: flex; gap: 36px; flex-wrap: wrap; align-items: flex-end; }
-  .hero .label { color: var(--muted); font-size: 12px; }
-  .hero .value { font-size: 38px; font-weight: 650; line-height: 1.15; }
-  .hero .delta { font-size: 20px; font-weight: 600; }
-  .stats { display: flex; gap: 30px; flex-wrap: wrap; margin-top: 16px;
-           padding-top: 14px; border-top: 1px solid var(--grid); }
-  .stat .k { color: var(--muted); font-size: 12px; }
-  .stat .v { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* 見出しは小さく、頭に短い線を置いて区切りを作る */
+  h2 {
+    font-size: 11px; color: var(--ink2); margin: 0 0 14px; font-weight: 700;
+    letter-spacing: .09em; text-transform: none;
+    display: flex; align-items: center; gap: 8px;
+  }
+  h2::before {
+    content: ""; width: 12px; height: 2px; border-radius: 1px; flex: none;
+    background: var(--axis);
+  }
+
+  .hero { display: flex; gap: 44px; flex-wrap: wrap; align-items: flex-end; }
+  .hero .label { color: var(--ink2); font-size: 11px; letter-spacing: .06em; font-weight: 600; }
+  .hero .value {
+    /* 桁が増えても狭い画面で溢れないよう可変にする（1,000万円台まで想定） */
+    font-size: clamp(32px, 8.5vw, 46px);
+    font-weight: 700; line-height: 1.05; letter-spacing: -.025em;
+    font-variant-numeric: tabular-nums; margin-top: 2px;
+  }
+  .hero .delta {
+    font-size: 21px; font-weight: 700; letter-spacing: -.01em;
+    font-variant-numeric: tabular-nums; margin-top: 4px;
+  }
+  .stats {
+    display: flex; gap: 34px; flex-wrap: wrap; margin-top: 20px;
+    padding-top: 16px; border-top: 1px solid var(--grid);
+  }
+  .stat .k { color: var(--ink2); font-size: 11px; letter-spacing: .04em; }
+  .stat .v { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums;
+             letter-spacing: -.01em; }
   .good { color: var(--good); }
   .bad { color: var(--bad); }
 
+  /* 相場判断のカードは、いまのレジームの色を左端に帯として出す */
+  #regimecard::before {
+    content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px;
+    border-radius: 0 3px 3px 0; background: var(--regime-color, var(--axis));
+  }
   .regime { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  .pill { padding: 3px 12px; border-radius: 999px; font-weight: 600;
-          border: 1px solid var(--border); font-size: 13px; }
-  h2 { font-size: 13px; color: var(--ink2); margin: 0 0 10px; font-weight: 600;
-       letter-spacing: .02em; }
+  .regime .arrow { color: var(--muted); }
+  .pill {
+    padding: 4px 14px; border-radius: 999px; font-weight: 700; font-size: 13px;
+    border: 1px solid var(--border); background: var(--pill-bg);
+  }
+  /* レジーム色は枠と点で示し、文字は読みやすい色のままにする。
+     状態色は小さい文字にはコントラストが足りない（暗い面で3.6:1） */
+  #regime {
+    border-color: var(--regime-color, var(--border)); color: var(--ink);
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  #regime::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none;
+    background: var(--regime-color, var(--axis));
+  }
 
   .chartbox { position: relative; }
   svg { display: block; width: 100%; }
@@ -97,14 +181,18 @@
   }
 
   /* 期間フィルタ・操作ボタン */
-  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
   button {
-    font: inherit; font-size: 12px; padding: 4px 12px; border-radius: 999px;
-    border: 1px solid var(--border); background: transparent; color: var(--ink2);
-    cursor: pointer;
+    font: inherit; font-size: 12px; padding: 5px 14px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--pill-bg); color: var(--ink2);
+    cursor: pointer; transition: background .15s, border-color .15s, color .15s;
   }
   button:hover { border-color: var(--muted); color: var(--ink); }
-  button.on { background: var(--series); border-color: var(--series); color: #fff; font-weight: 600; }
+  button:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+  button.on {
+    background: var(--btn-on-bg); border-color: var(--btn-on-bg);
+    color: var(--btn-on-fg); font-weight: 700;
+  }
   .hbar { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
   .hbar .track { width: 66px; height: 6px; border-radius: 3px; background: var(--grid);
                  overflow: hidden; flex: none; }
@@ -121,13 +209,25 @@
 
   .scroll { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-  th, td { text-align: right; padding: 7px 10px; white-space: nowrap; }
-  th { color: var(--muted); font-size: 12px; font-weight: 600;
-       border-bottom: 1px solid var(--axis); }
+  th, td { text-align: right; padding: 9px 12px; white-space: nowrap; }
+  th {
+    color: var(--ink2); font-size: 11px; font-weight: 700; letter-spacing: .05em;
+    border-bottom: 1px solid var(--axis); padding-bottom: 8px;
+    position: sticky; top: 0; background: var(--surface); z-index: 1;
+  }
   td { border-bottom: 1px solid var(--grid); }
-  th:first-child, td:first-child { text-align: left; }
-  .empty { color: var(--muted); padding: 6px 0; }
-  footer { color: var(--muted); font-size: 11px; margin-top: 18px; }
+  tbody tr { transition: background .12s; }
+  tbody tr:hover { background: var(--row-hover); }
+  tbody tr:last-child td { border-bottom: none; }
+  th:first-child, td:first-child { text-align: left; font-weight: 600; }
+  .empty { color: var(--ink2); padding: 10px 0; }
+  .errline {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 12px; color: var(--ink2); padding: 5px 0;
+    border-bottom: 1px solid var(--grid); word-break: break-all; white-space: normal;
+  }
+  .errline:last-child { border-bottom: none; }
+  footer { color: var(--ink2); font-size: 11px; margin-top: 22px; text-align: center; }
 </style>
 </head>
 <body>
@@ -165,11 +265,11 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="regimecard">
     <h2>いまの相場判断</h2>
     <div class="regime">
       <span class="pill" id="regime">—</span>
-      <span>→</span>
+      <span class="arrow">→</span>
       <span class="pill" id="strategy">—</span>
       <span class="sub" id="cap"></span>
     </div>
@@ -210,6 +310,14 @@
   <div class="card">
     <h2>売買履歴（新しい順・最新40件）</h2>
     <div class="scroll capped"><div id="trades"></div></div>
+  </div>
+
+  <div class="card" id="errcard" hidden>
+    <h2>直近のエラー</h2>
+    <div id="errors"></div>
+    <div class="sub" style="margin-top:8px">
+      通信断などで失敗したときの記録。ループは止まらず再試行しています（全文は results/live_errors.log）。
+    </div>
   </div>
 
   <footer id="foot"></footer>
@@ -253,6 +361,9 @@ function render(s) {
     setText("started", k.started ? k.started.slice(0, 16) : "—");
     setText("regime", k.regime);
     setText("strategy", k.strategy);
+    // レジームの色をカードの左帯とピルに反映（グラフ下の帯と同じ対応）
+    document.getElementById("regimecard").style.setProperty(
+      "--regime-color", REGIME_COLOR[k.regime] || "var(--axis)");
     setText("cap", `エクスポージャー上限 ${k.cap_pct.toFixed(0)}%`);
     setText("reason", "根拠: " + k.reason);
     renderPositions(k);
@@ -273,6 +384,7 @@ function render(s) {
   }
   renderTrades(s.trades);
   renderStats(s.stats);
+  renderErrors(s.errors);
   drawChart(s.curve, k ? k.capital : 1000000);
   setTabIdentity(s);
   document.getElementById("foot").textContent =
@@ -416,6 +528,17 @@ function renderRegimeLegend(seen) {
   if (!seen || !seen.length) { el.innerHTML = ""; return; }
   el.innerHTML = '<span class="sub">グラフ下の帯＝そのときの相場付き：</span>'
     + seen.map(r => `<span class="lg"><span class="sw" style="background:${REGIME_COLOR[r]}"></span>${r}</span>`).join("");
+}
+
+// エラーが無いときはカードごと隠す。常設すると「異常が普通」に見えてしまう。
+function renderErrors(errs) {
+  const card = document.getElementById("errcard");
+  const box = document.getElementById("errors");
+  if (!errs || !errs.length) { card.hidden = true; box.innerHTML = ""; return; }
+  card.hidden = false;
+  box.innerHTML = errs.map(e =>
+    `<div class="errline">${e.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</div>`
+  ).join("");
 }
 
 function renderStats(st) {

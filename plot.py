@@ -28,10 +28,10 @@ CAPITAL = bt.CAPITAL
 BENCH = "BTC買い持ち"
 
 # 資産曲線に載せる6戦略（隣接ペアの配色検証済み）
-LINE_SERIES = [BENCH, "均等分散(月次)", "ドンチャン55/20",
+LINE_SERIES = [BENCH, "均等分散(月次)", "レジーム切替(実運用)",
                "移動平均20/60", "モメンタム上位2", "RSI逆張り"]
 # ドローダウンは重ね書きが効かないので3本まで（全ペアの配色検証済み）
-DD_SERIES = [BENCH, "均等分散(月次)", "ドンチャン55/20"]
+DD_SERIES = [BENCH, "均等分散(月次)", "レジーム切替(実運用)"]
 
 THEME = {
     "light": {
@@ -185,8 +185,9 @@ def fig_drawdown(all_curves: dict, t: dict, path: str) -> None:
 
     fig.suptitle("ドローダウン（そのときの最高値から何%下げた状態か）",
                  color=t["ink"], fontsize=14, x=0.012, ha="left", y=0.975)
-    fig.text(0.012, 0.905, "トレンドフォローだけが、相場付きが変わっても落ち込みの深さを"
-             "同じ水準に抑えている", color=t["ink2"], fontsize=10, ha="left")
+    fig.text(0.012, 0.905, "買い持ちと均等分散は相場次第で落ち込みの深さが倍近くぶれる。"
+             "実運用のレジーム切替だけが、期間をまたいでも同じ水準（-26〜-27%）に収まっている",
+             color=t["ink2"], fontsize=10, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.90))
     fig.savefig(path, dpi=150)
     plt.close(fig)

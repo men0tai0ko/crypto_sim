@@ -131,6 +131,20 @@ def _trade_stats() -> dict:
     }
 
 
+def _recent_errors(limit: int = 5) -> list[str]:
+    """
+    直近のエラーを画面に出すために読む。
+    「ログを確認してください」と書きながらブラウザからは見られない、では
+    診断の役に立たない。行頭が [日時] の行だけを拾う（本文は要約のみ）。
+    """
+    try:
+        with open(lt.ERROR_LOG, encoding="utf-8") as f:
+            lines = [l.rstrip() for l in f if l.startswith("[")]
+    except OSError:
+        return []
+    return lines[-limit:][::-1]
+
+
 def build_state() -> dict:
     snap = _read_json(lt.SNAPSHOT_FILE)
     lock = lt.read_lock()
@@ -152,6 +166,7 @@ def build_state() -> dict:
         "curve": _equity_curve(),
         "trades": _trades(),
         "stats": _trade_stats(),
+        "errors": _recent_errors(),
         "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 

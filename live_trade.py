@@ -490,16 +490,41 @@ class LiveTrader:
             print("    保有なし（現金100%）")
 
     def status(self) -> None:
-        prices = data_mod.fetch_live()
-        invested = self.broker.position_value(prices)
-        equity = self.broker.cash + invested
-        print(f"開始: {self.started}")
-        print(f"現金 {self.broker.cash:,.0f}円 / 評価額 {invested:,.0f}円 "
-              f"→ 総資産 {equity:,.0f}円（{equity-CAPITAL:+,.0f}円）")
-        for sym, pos in self.broker.positions.items():
-            p = prices.get(sym, 0)
-            print(f"  {sym:<9} {pos.qty:.6f}枚  評価 {pos.qty*p:,.0f}円  "
-                  f"含み {pos.qty*p - pos.cost_jpy:+,.0f}円")
+        """
+        トレーダーが書いたスナップショットを読むだけ。通信しない。
+        確認したいだけなのに価格を取りに行くと、遅いうえ回線が無いと失敗する。
+        """
+        snap = None
+        if os.path.exists(SNAPSHOT_FILE):
+            try:
+                with open(SNAPSHOT_FILE, encoding="utf-8") as f:
+                    snap = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                snap = None
+
+        lock = read_lock()
+        print(f"稼働状況: {'稼働中 (PID %d)' % lock['pid'] if lock else '停止中'}")
+        print(f"運用開始: {self.started}")
+
+        if snap is None:
+            print("まだスナップショットがありません（トレーダーの初回ループ前）。")
+            print(f"現金 {self.broker.cash:,.0f}円")
+            return
+
+        print(f"データ時刻: {snap['ts']}")
+        print(f"相場判断: {snap['regime']} → {snap['strategy']}（上限{snap['cap_pct']:.0f}%）")
+        print(f"  {snap['reason']}")
+        print(f"現金 {snap['cash']:,.0f}円 / 評価額 {snap['invested']:,.0f}円 "
+              f"→ 総資産 {snap['equity']:,.0f}円（{snap['pnl']:+,.0f}円 / {snap['pnl_pct']:+.2f}%）")
+        if snap["positions"]:
+            for p in snap["positions"]:
+                print(f"  {p['name']:<10} 評価 {p['value']:>10,.0f}円  "
+                      f"含み {p['upnl']:+,.0f}円 ({p['upnl_pct']:+.2f}%)"
+                      + (f"  ストップ {p['stop']:,.0f}" if p.get("stop") else ""))
+        else:
+            print("  保有なし（現金100%）")
+        if snap.get("data_gaps"):
+            print(f"  [警告] 日足データの欠損: {', '.join(snap['data_gaps'])}")
 
 
 def main() -> None:

@@ -93,7 +93,30 @@ def load_panel(symbols: list[str] | None = None,
         panel[field.lower()] = pd.DataFrame(
             {s: frames[s][field].reindex(index) for s in symbols}, index=index
         )
+
+    # 直近に抜けがあるなら、配信側が後から埋めている可能性がある。
+    # キャッシュの寿命（12時間）を待たずに1度だけ取り直す。
+    if not force and find_gaps(panel, days=7) and _gap_retry_due():
+        _mark_gap_retry()
+        return load_panel(symbols, start, end, force=True)
     return panel
+
+
+_GAP_RETRY_FILE = os.path.join(CACHE_DIR, ".gap_retry")
+GAP_RETRY_INTERVAL = timedelta(hours=1)   # 取り直しはこの間隔より頻繁にしない
+
+
+def _gap_retry_due() -> bool:
+    if not os.path.exists(_GAP_RETRY_FILE):
+        return True
+    age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(_GAP_RETRY_FILE))
+    return age > GAP_RETRY_INTERVAL
+
+
+def _mark_gap_retry() -> None:
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(_GAP_RETRY_FILE, "w", encoding="utf-8") as f:
+        f.write(datetime.now().isoformat())
 
 
 def find_gaps(panel: dict, days: int = 30) -> list[str]:
