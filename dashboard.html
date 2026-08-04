@@ -134,7 +134,11 @@
     0%, 100% { box-shadow: 0 0 0 0 var(--state); opacity: 1; }
     70%      { box-shadow: 0 0 0 5px transparent; opacity: .55; }
   }
-  @media (prefers-reduced-motion: reduce) { .badge.on .dot { animation: none; } }
+  /* 動きを抑える設定なら、脈動も幅のアニメーションも止める */
+  @media (prefers-reduced-motion: reduce) {
+    .badge.on .dot { animation: none; }
+    .hbar .fill, .cbar .seg, .card, button, tbody tr { transition: none !important; }
+  }
 
   /* ガラス質のカード。背景のオーロラを透かして奥行きを出す */
   .card {
@@ -452,13 +456,13 @@ function render(s) {
     renderComposition(k);
     renderPositions(k);
     renderUniverse(k);
-    warnIfStale(s, k);
   } else {
     // スナップショットが無いのに前回の数値を残すと、動いていないのに
     // 動いているように見えてしまう。明示的に空にする。
     ["equity", "pnl", "cash", "invested", "expo", "dd", "started",
      "regime", "strategy"].forEach(id => setText(id, "—", ""));
     setText("cap", ""); setText("reason", "");
+    document.getElementById("compo").innerHTML = "";
     document.getElementById("positions").innerHTML =
       '<div class="empty">データ待ち（トレーダーの初回ループがまだ完了していません）</div>';
     document.getElementById("universe").innerHTML =
@@ -477,8 +481,11 @@ function render(s) {
 
 // プロセスは生きているのにデータが更新されない、が一番危険な壊れ方。
 // 心拍とスナップショットの時刻がずれたら画面上で警告する。
-function warnIfStale(s, k) {
+// 古さは時間の経過で決まるので、再描画ではなく毎秒のティックから呼ぶ。
+function warnIfStale() {
+  const s = LAST, k = s && s.snapshot;
   const el = document.getElementById("stale");
+  if (!k) { el.innerHTML = ""; return; }
   const msgs = [];
   if (s.running && s.interval && k.ts) {
     const age = (Date.now() - parseTs(k.ts)) / 1000;
@@ -555,7 +562,7 @@ function renderPositions(k) {
       <td>${p.weight.toFixed(1)}%</td>
     </tr>`).join("");
   box.innerHTML = `<table><thead><tr>
-      <th>銘柄</th><th>現在値</th><th>ストップ</th><th>評価額</th>
+      <th scope="col">銘柄</th><th>現在値</th><th>ストップ</th><th>評価額</th>
       <th>含み損益</th><th>率</th><th>構成比</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
 }
@@ -602,7 +609,7 @@ function renderUniverse(k) {
     </tr>`;
   }).join("");
   box.innerHTML = `<table><thead><tr>
-      <th>銘柄</th><th>30日推移</th><th>現在値</th><th>前日比</th><th>50日線比</th><th>200日線比</th>
+      <th scope="col">銘柄</th><th>30日推移</th><th>現在値</th><th>前日比</th><th>50日線比</th><th>200日線比</th>
       <th>${u[0].signal_label || "シグナル水準"}</th><th>点灯まで</th><th>ストップ</th><th>状態</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   note.textContent = `「${u[0].signal_label || "—"}」は現在の戦略「${k.strategy}」の`
@@ -717,7 +724,7 @@ function symbolPnl(rows) {
       <td>${m.count ? Math.round(m.wins / m.count * 100) + "%" : "—"}</td>
     </tr>`).join("");
   return `<div class="scroll" style="margin-top:18px"><table><thead><tr>
-      <th>銘柄</th><th>実現損益</th><th>含み損益</th><th>合計</th><th>決済</th><th>勝率</th>
+      <th scope="col">銘柄</th><th>実現損益</th><th>含み損益</th><th>合計</th><th>決済</th><th>勝率</th>
     </tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
@@ -939,11 +946,32 @@ function hideTip() {
 const REFRESH_MS = 15000;
 let timer = null, lastFetch = null;
 
+/* 中身が変わったかの指紋。トレーダーは5分に1度しか書かないのに画面は15秒ごとに
+   問い合わせるので、そのまま描き直すと20回に19回は無駄なうえ、
+   選択中のテキストが毎回解除されて数値をコピーできない。 */
+let lastSig = null;
+function signature(s) {
+  const k = s.snapshot;
+  return JSON.stringify([
+    s.running, s.heartbeat, s.stale_reason,
+    k && k.ts, k && k.equity, k && k.regime,
+    s.curve.length, s.trades.length,
+    s.stats && s.stats.count, s.errors && s.errors.length,
+  ]);
+}
+
 async function refresh() {
   try {
     const r = await fetch("/api/state", { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
-    render(await r.json());
+    const data = await r.json();
+    const sig = signature(data);
+    if (sig !== lastSig) {
+      render(data);          // 中身が変わったときだけ描き直す
+      lastSig = sig;
+    } else {
+      LAST = data;           // 最新は保持するが DOM は触らない
+    }
     lastFetch = new Date();
   } catch (e) {
     const badge = document.getElementById("status");
@@ -964,6 +992,7 @@ function tickAge() {
     ? "更新停止中（タブ非表示）"
     : (sec < 5 ? "たった今更新" : `${sec}秒前に更新`);
   tickNext();
+  warnIfStale();
 }
 
 // トレーダー側が次に売買判断をする時刻までのカウントダウン。
