@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>仮想運用ダッシュボード</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb;
+    --page: #f9f9f7;
+    --ink: #0b0b0b;
+    --ink2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series: #2a78d6;
+    --series-soft: rgba(42,120,214,0.13);
+    --good: #0ca30c;
+    --bad: #d03b3b;
+    --warn: #fab219;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface: #1a1a19;
+      --page: #0d0d0d;
+      --ink: #ffffff;
+      --ink2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255,255,255,0.10);
+      --series: #3987e5;
+      --series-soft: rgba(57,135,229,0.16);
+      --good: #0ca30c;
+      --bad: #d03b3b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px;
+    background: var(--page); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", "Yu Gothic UI", sans-serif;
+    font-size: 14px; line-height: 1.6;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  /* flex: none が無いと、幅が足りないとき丸が潰れて楕円になる */
+  .badge .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+  .badge.on { color: var(--good); }
+  .badge.off { color: var(--bad); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-top: 14px;
+  }
+  .hero { display: flex; gap: 36px; flex-wrap: wrap; align-items: flex-end; }
+  .hero .label { color: var(--muted); font-size: 12px; }
+  .hero .value { font-size: 38px; font-weight: 650; line-height: 1.15; }
+  .hero .delta { font-size: 20px; font-weight: 600; }
+  .stats { display: flex; gap: 30px; flex-wrap: wrap; margin-top: 16px;
+           padding-top: 14px; border-top: 1px solid var(--grid); }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .stat .v { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .good { color: var(--good); }
+  .bad { color: var(--bad); }
+
+  .regime { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .pill { padding: 3px 12px; border-radius: 999px; font-weight: 600;
+          border: 1px solid var(--border); font-size: 13px; }
+  h2 { font-size: 13px; color: var(--ink2); margin: 0 0 10px; font-weight: 600;
+       letter-spacing: .02em; }
+
+  .chartbox { position: relative; }
+  svg { display: block; width: 100%; }
+  .tip {
+    position: absolute; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 10px; font-size: 12px; white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(0,0,0,.14); z-index: 5;
+  }
+  .tip .big { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+  .warnbar:not(:empty) {
+    margin-top: 12px; padding: 9px 14px; border-radius: 8px; font-size: 13px;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--warn); border-left-width: 4px;
+  }
+
+  /* 期間フィルタ・操作ボタン */
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  button {
+    font: inherit; font-size: 12px; padding: 4px 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: transparent; color: var(--ink2);
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); color: var(--ink); }
+  button.on { background: var(--series); border-color: var(--series); color: #fff; font-weight: 600; }
+  .hbar { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .hbar .track { width: 66px; height: 6px; border-radius: 3px; background: var(--grid);
+                 overflow: hidden; flex: none; }
+  /* display:block が要る。span のままだと幅・高さが効かず 0×0 になって帯が見えない */
+  .hbar .fill { display: block; height: 100%; background: var(--series); border-radius: 3px; }
+  .hbar .fill.reached { background: var(--good); }
+  .spark { display: block; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .legend .lg { display: inline-flex; align-items: center; gap: 6px;
+                font-size: 12px; color: var(--ink2); }
+  .legend .sw { width: 14px; height: 8px; border-radius: 2px; display: inline-block; flex: none; }
+  /* 売買履歴が伸び続けてページが果てしなく長くならないようにする */
+  .capped { max-height: 420px; overflow-y: auto; }
+
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 7px 10px; white-space: nowrap; }
+  th { color: var(--muted); font-size: 12px; font-weight: 600;
+       border-bottom: 1px solid var(--axis); }
+  td { border-bottom: 1px solid var(--grid); }
+  th:first-child, td:first-child { text-align: left; }
+  .empty { color: var(--muted); padding: 6px 0; }
+  footer { color: var(--muted); font-size: 11px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>仮想運用ダッシュボード</h1>
+    <span id="status" class="badge off"><span class="dot"></span>読み込み中</span>
+    <span class="sub" id="updated"></span>
+    <span class="sub" id="next"></span>
+    <span style="margin-left:auto; display:flex; gap:10px; align-items:center">
+      <span class="sub" id="age"></span>
+      <button id="now" type="button">今すぐ更新</button>
+    </span>
+  </header>
+  <div class="sub">架空の資金によるシミュレーションです。実際の売買・送金は行いません。</div>
+  <div id="stale" class="warnbar"></div>
+
+  <div class="card">
+    <div class="hero">
+      <div>
+        <div class="label">総資産</div>
+        <div class="value" id="equity">—</div>
+      </div>
+      <div>
+        <div class="label">損益（元手 1,000,000円）</div>
+        <div class="delta" id="pnl">—</div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k">現金</div><div class="v" id="cash">—</div></div>
+      <div class="stat"><div class="k">評価額</div><div class="v" id="invested">—</div></div>
+      <div class="stat"><div class="k">建玉率</div><div class="v" id="expo">—</div></div>
+      <div class="stat"><div class="k">ピーク比</div><div class="v" id="dd">—</div></div>
+      <div class="stat"><div class="k">運用開始</div><div class="v" id="started">—</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>いまの相場判断</h2>
+    <div class="regime">
+      <span class="pill" id="regime">—</span>
+      <span>→</span>
+      <span class="pill" id="strategy">—</span>
+      <span class="sub" id="cap"></span>
+    </div>
+    <div class="sub" id="reason" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <h2>監視ユニバース</h2>
+    <div class="scroll"><div id="universe"></div></div>
+    <div class="sub" id="uni-note" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <h2>資産推移</h2>
+    <div class="filters" id="ranges">
+      <button type="button" data-h="24">24時間</button>
+      <button type="button" data-h="168">7日</button>
+      <button type="button" data-h="720">30日</button>
+      <button type="button" data-h="0" class="on">全期間</button>
+    </div>
+    <div class="chartbox">
+      <svg id="chart" role="img" aria-label="総資産の推移"></svg>
+      <div class="tip" id="tip"></div>
+    </div>
+    <div class="legend" id="rlegend"></div>
+  </div>
+
+  <div class="card">
+    <h2>保有ポジション</h2>
+    <div class="scroll"><div id="positions"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>取引成績（決済済みのみ）</h2>
+    <div id="stats"></div>
+  </div>
+
+  <div class="card">
+    <h2>売買履歴（新しい順・最新40件）</h2>
+    <div class="scroll capped"><div id="trades"></div></div>
+  </div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+const yen = v => Math.round(v).toLocaleString("ja-JP") + "円";
+const pct = v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+const cls = v => v > 0 ? "good" : (v < 0 ? "bad" : "");
+let LAST = null;
+
+function setText(id, text, klass) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  if (klass !== undefined) el.className = el.className.replace(/\b(good|bad)\b/g, "").trim() + (klass ? " " + klass : "");
+}
+
+function render(s) {
+  LAST = s;
+  const badge = document.getElementById("status");
+  if (s.running) {
+    badge.className = "badge on";
+    badge.innerHTML = '<span class="dot"></span>稼働中';
+    document.getElementById("updated").textContent =
+      `PID ${s.pid} / ${s.interval}秒間隔 / 最終更新 ${s.heartbeat}`;
+  } else {
+    badge.className = "badge off";
+    badge.innerHTML = '<span class="dot"></span>停止中';
+    document.getElementById("updated").textContent =
+      s.stale_reason ? `停止中（${s.stale_reason}）` : "トレーダーが起動していません";
+  }
+
+  const k = s.snapshot;
+  if (k) {
+    setText("equity", yen(k.equity));
+    setText("pnl", `${k.pnl >= 0 ? "+" : ""}${Math.round(k.pnl).toLocaleString("ja-JP")}円 （${pct(k.pnl_pct)}）`, cls(k.pnl));
+    setText("cash", yen(k.cash));
+    setText("invested", yen(k.invested));
+    setText("expo", (k.equity ? (k.invested / k.equity * 100) : 0).toFixed(1) + "%");
+    setText("dd", k.drawdown_pct.toFixed(2) + "%", k.drawdown_pct < 0 ? "bad" : "");
+    setText("started", k.started ? k.started.slice(0, 16) : "—");
+    setText("regime", k.regime);
+    setText("strategy", k.strategy);
+    setText("cap", `エクスポージャー上限 ${k.cap_pct.toFixed(0)}%`);
+    setText("reason", "根拠: " + k.reason);
+    renderPositions(k);
+    renderUniverse(k);
+    warnIfStale(s, k);
+  } else {
+    // スナップショットが無いのに前回の数値を残すと、動いていないのに
+    // 動いているように見えてしまう。明示的に空にする。
+    ["equity", "pnl", "cash", "invested", "expo", "dd", "started",
+     "regime", "strategy"].forEach(id => setText(id, "—", ""));
+    setText("cap", ""); setText("reason", "");
+    document.getElementById("positions").innerHTML =
+      '<div class="empty">データ待ち（トレーダーの初回ループがまだ完了していません）</div>';
+    document.getElementById("universe").innerHTML =
+      '<div class="empty">データ待ち</div>';
+    document.getElementById("uni-note").textContent = "";
+    document.getElementById("stale").textContent = "";
+  }
+  renderTrades(s.trades);
+  renderStats(s.stats);
+  drawChart(s.curve, k ? k.capital : 1000000);
+  setTabIdentity(s);
+  document.getElementById("foot").textContent =
+    `サーバ時刻 ${s.server_time} ／ この画面は表示専用で、売買には一切関与しません。15秒ごとに自動更新。`;
+}
+
+// プロセスは生きているのにデータが更新されない、が一番危険な壊れ方。
+// 心拍とスナップショットの時刻がずれたら画面上で警告する。
+function warnIfStale(s, k) {
+  const el = document.getElementById("stale");
+  const msgs = [];
+  if (s.running && s.interval && k.ts) {
+    const age = (Date.now() - parseTs(k.ts)) / 1000;
+    if (age > s.interval * 3) {
+      msgs.push(`⚠ 表示中のデータは ${Math.floor(age / 60)}分前のものです。`
+        + `トレーダーは起動していますが、更新が止まっている可能性があります`
+        + `（results/live_errors.log を確認してください）。`);
+    }
+  }
+  // 日足の抜けは指標の集計期間を静かにずらす。気づけるように表に出す。
+  if (k.data_gaps && k.data_gaps.length) {
+    msgs.push(`⚠ 日足データが ${k.data_gaps.length}日ぶん欠けています`
+      + `（${k.data_gaps.join("、")}）。配信元の不具合です。`
+      + `移動平均やATRの集計期間がその日数ぶんずれます。`);
+  }
+  el.innerHTML = msgs.map(m => `<div>${m}</div>`).join("");
+}
+
+function renderPositions(k) {
+  const box = document.getElementById("positions");
+  if (!k.positions || !k.positions.length) {
+    box.innerHTML = '<div class="empty">保有なし（現金100%）</div>';
+    return;
+  }
+  const rows = k.positions.map(p => `
+    <tr>
+      <td>${p.name}<span class="sub"> ${p.symbol}</span></td>
+      <td>${p.price ? num(p.price, dec(p.price)) : "—"}</td>
+      <td>${p.stop ? num(p.stop, dec(p.stop)) : "—"}</td>
+      <td>${yen(p.value)}</td>
+      <td class="${cls(p.upnl)}">${p.upnl >= 0 ? "+" : ""}${Math.round(p.upnl).toLocaleString("ja-JP")}円</td>
+      <td class="${cls(p.upnl)}">${pct(p.upnl_pct)}</td>
+      <td>${p.weight.toFixed(1)}%</td>
+    </tr>`).join("");
+  box.innerHTML = `<table><thead><tr>
+      <th>銘柄</th><th>現在値</th><th>ストップ</th><th>評価額</th>
+      <th>含み損益</th><th>率</th><th>構成比</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+const num = (v, d = 0) => v === null || v === undefined
+  ? "—" : v.toLocaleString("ja-JP", { minimumFractionDigits: d, maximumFractionDigits: d });
+const signed = (v, d = 2) => v === null || v === undefined
+  ? "—" : (v >= 0 ? "+" : "") + v.toFixed(d) + "%";
+// 価格の桁が銘柄ごとに大きく違う（1000万円台〜100円台）ので小数桁を出し分ける
+const dec = p => p >= 10000 ? 0 : (p >= 100 ? 1 : 3);
+
+function renderUniverse(k) {
+  const box = document.getElementById("universe");
+  const note = document.getElementById("uni-note");
+  const u = k.universe;
+  if (!u || !u.length) {
+    box.innerHTML = '<div class="empty">銘柄データがまだありません（次のループで反映されます）</div>';
+    note.textContent = "";
+    return;
+  }
+  const rows = u.map(r => {
+    const near = r.signal_gap_pct !== null && r.signal_gap_pct <= 0;
+    const state = r.held
+      ? '<span class="pill" style="border-color:var(--good);color:var(--good)">保有中</span>'
+      : (near ? '<span class="pill" style="border-color:var(--warn)">条件充足</span>'
+              : '<span class="sub">待機</span>');
+    return `<tr>
+      <td>${r.name}<span class="sub"> ${r.symbol}</span></td>
+      <td>${sparkline(r.spark)}</td>
+      <td>${num(r.price, dec(r.price))}</td>
+      <td class="${cls(r.change_pct)}">${signed(r.change_pct)}</td>
+      <td class="${cls(r.vs_ma50_pct)}">${signed(r.vs_ma50_pct, 1)}</td>
+      <td class="${cls(r.vs_ma200_pct)}">${signed(r.vs_ma200_pct, 1)}</td>
+      <td>${r.signal_level === null ? "—" : num(r.signal_level, dec(r.signal_level))}</td>
+      <td>${gapBar(r.signal_gap_pct)}</td>
+      <td>${r.stop ? num(r.stop, dec(r.stop)) : "—"}</td>
+      <td>${state}</td>
+    </tr>`;
+  }).join("");
+  box.innerHTML = `<table><thead><tr>
+      <th>銘柄</th><th>30日推移</th><th>現在値</th><th>前日比</th><th>50日線比</th><th>200日線比</th>
+      <th>${u[0].signal_label || "シグナル水準"}</th><th>点灯まで</th><th>ストップ</th><th>状態</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  note.textContent = `「${u[0].signal_label || "—"}」は現在の戦略「${k.strategy}」の`
+    + `エントリー条件。相場付きが変わると基準そのものが切り替わります。`
+    + `　バーは点灯までの近さ（${GAP_REF}%以上離れていれば空、到達で満タン）。`;
+}
+
+/* 一覧内の小さな折れ線。1行1系列なので凡例は不要 */
+function sparkline(vals, w = 92, h = 26) {
+  if (!vals || vals.length < 2) return "—";
+  const lo = Math.min(...vals), hi = Math.max(...vals), rng = (hi - lo) || 1;
+  const X = i => i / (vals.length - 1) * (w - 5) + 2.5;
+  const Y = v => (h - 3) - (v - lo) / rng * (h - 6);
+  const d = vals.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(" ");
+  const n = vals.length - 1;
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+    <path d="${d}" fill="none" stroke="var(--series)" stroke-width="1.5"
+          stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${X(n).toFixed(1)}" cy="${Y(vals[n]).toFixed(1)}" r="2.4"
+            fill="var(--series)" stroke="var(--surface)" stroke-width="1.5"/>
+  </svg>`;
+}
+
+/* 点灯までの距離。銘柄間の相対値ではなく固定基準にして、
+   他の銘柄が動いてもバーの意味が変わらないようにする */
+const GAP_REF = 30;
+function gapBar(gap) {
+  if (gap === null || gap === undefined) return "—";
+  if (gap <= 0) {
+    return `<div class="hbar"><span class="good">到達</span>
+      <span class="track"><span class="fill reached" style="width:100%"></span></span></div>`;
+  }
+  const frac = Math.max(0.03, 1 - Math.min(gap, GAP_REF) / GAP_REF);
+  return `<div class="hbar"><span>あと ${gap.toFixed(1)}%</span>
+    <span class="track"><span class="fill" style="width:${(frac * 100).toFixed(0)}%"></span></span></div>`;
+}
+
+// 帯は色だけで意味を持たせない。出現したレジームぶんだけ凡例を出す。
+function renderRegimeLegend(seen) {
+  const el = document.getElementById("rlegend");
+  if (!seen || !seen.length) { el.innerHTML = ""; return; }
+  el.innerHTML = '<span class="sub">グラフ下の帯＝そのときの相場付き：</span>'
+    + seen.map(r => `<span class="lg"><span class="sw" style="background:${REGIME_COLOR[r]}"></span>${r}</span>`).join("");
+}
+
+function renderStats(st) {
+  const box = document.getElementById("stats");
+  if (!st || !st.count) {
+    box.innerHTML = '<div class="empty">まだ決済がありません。'
+      + '（買っただけの含み損益は上の「保有ポジション」を見てください）</div>';
+    return;
+  }
+  const jp = v => (v >= 0 ? "+" : "") + Math.round(v).toLocaleString("ja-JP") + "円";
+  const items = [
+    ["累計実現損益", jp(st.total), cls(st.total)],
+    ["決済回数", `${st.count}回`, ""],
+    ["勝率", `${st.win_rate.toFixed(0)}%（${st.wins}/${st.count}）`, ""],
+    ["平均利益", jp(st.avg_win), "good"],
+    ["平均損失", jp(st.avg_loss), "bad"],
+    ["プロフィットファクター",
+      st.profit_factor === null ? "—" : st.profit_factor.toFixed(2), ""],
+    ["最大の利益", jp(st.best), "good"],
+    ["最大の損失", jp(st.worst), "bad"],
+  ];
+  box.innerHTML = '<div class="stats" style="border-top:none;padding-top:0;margin-top:0">'
+    + items.map(([k, v, c]) =>
+        `<div class="stat"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join("")
+    + "</div>";
+}
+
+function renderTrades(trades) {
+  const box = document.getElementById("trades");
+  if (!trades || !trades.length) {
+    box.innerHTML = '<div class="empty">まだ売買はありません</div>';
+    return;
+  }
+  const rows = trades.map(t => `
+    <tr>
+      <td>${t.t}</td>
+      <td>${t.symbol}</td>
+      <td>${t.side}</td>
+      <td>${num(t.price, dec(t.price))}</td>
+      <td>${yen(t.amount)}</td>
+      <td class="${t.realized === null ? "" : cls(t.realized)}">${
+        t.realized === null ? "—"
+        : (t.realized >= 0 ? "+" : "") + Math.round(t.realized).toLocaleString("ja-JP") + "円"}</td>
+      <td>${t.reason}</td>
+    </tr>`).join("");
+  box.innerHTML = `<table><thead><tr>
+      <th>日時</th><th>銘柄</th><th>売買</th><th>約定単価</th>
+      <th>金額</th><th>実現損益</th><th>理由</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/* ---- 資産推移チャート（外部ライブラリなし） ---- */
+const svg = document.getElementById("chart");
+const tip = document.getElementById("tip");
+let PLOT = null;
+
+/* レジーム帯の色。相場の危険度そのものなので状態色を使い、
+   色だけに意味を持たせないよう必ず凡例を添える */
+const REGIME_COLOR = { "強気": "var(--good)", "中立": "var(--muted)", "弱気": "var(--bad)" };
+
+/* 期間フィルタ。長期運用でチャートが潰れないように */
+let RANGE_H = 0;                       // 0 = 全期間
+const parseTs = s => new Date(s.replace(/-/g, "/")).getTime();
+
+function filterCurve(curve) {
+  if (!RANGE_H || !curve || curve.length < 3) return curve;
+  const cutoff = Date.now() - RANGE_H * 3600 * 1000;
+  const f = curve.filter(p => parseTs(p.t) >= cutoff);
+  return f.length >= 2 ? f : curve.slice(-2);   // 期間内に点が無くても線は描く
+}
+
+document.getElementById("ranges").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  RANGE_H = Number(b.dataset.h);
+  e.currentTarget.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+  if (LAST) drawChart(LAST.curve, LAST.snapshot ? LAST.snapshot.capital : 1000000);
+});
+
+function drawChart(fullCurve, capital) {
+  const curve = filterCurve(fullCurve);
+  const W = svg.clientWidth || 800, H = 260;
+  const narrow = W < 460;
+  // 狭い画面では左余白を詰める。74pxのままだと297px幅の1/4を軸ラベルが占めてしまう
+  // 下余白はレジーム帯（8px）とX軸ラベルの分を確保する
+  const m = { t: 12, r: 14, b: 44, l: narrow ? 50 : 74 };
+  const RIBBON_H = 8;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("height", H);
+
+  if (!curve || curve.length === 0) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle"
+      fill="var(--muted)" font-size="13">記録がまだありません</text>`;
+    PLOT = null;
+    return;
+  }
+
+  const vals = curve.map(p => p.equity);
+  let lo = Math.min(...vals, capital), hi = Math.max(...vals, capital);
+  // 資産がほぼ動いていない時期は、元手の±1%を窓にする。
+  // 極小の範囲に目盛りを打つと「100万」が4つ並んで意味をなさなくなるため。
+  if (hi - lo < capital * 0.005) {
+    const mid = (hi + lo) / 2;
+    lo = mid - capital * 0.01;
+    hi = mid + capital * 0.01;
+  } else {
+    const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+  }
+  const dec = (hi - lo) < 200000 ? 1 : 0;             // 狭い窓では小数第1位まで出す
+
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const X = i => m.l + (curve.length === 1 ? iw / 2 : i / (curve.length - 1) * iw);
+  const Y = v => m.t + (1 - (v - lo) / (hi - lo)) * ih;
+
+  let g = "";
+  // 横罫線と目盛り
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + (hi - lo) * i / 3, y = Y(v);
+    g += `<line x1="${m.l}" y1="${y}" x2="${W - m.r}" y2="${y}"
+           stroke="var(--grid)" stroke-width="1"/>`;
+    g += `<text x="${m.l - 8}" y="${y + 4}" text-anchor="end" fill="var(--muted)"
+           font-size="11">${(v / 10000).toFixed(dec)}万</text>`;
+  }
+  // 元手のライン
+  const yc = Y(capital);
+  g += `<line x1="${m.l}" y1="${yc}" x2="${W - m.r}" y2="${yc}"
+         stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>`;
+  g += `<text x="${W - m.r}" y="${yc - 6}" text-anchor="end" fill="var(--muted)"
+         font-size="11">元手 ${(capital/10000).toFixed(0)}万円</text>`;
+
+  const pts = curve.map((p, i) => [X(i), Y(p.equity)]);
+  const line = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  g += `<path d="${line} L ${pts[pts.length-1][0].toFixed(1)} ${m.t+ih} L ${pts[0][0].toFixed(1)} ${m.t+ih} Z"
+         fill="var(--series-soft)"/>`;
+  g += `<path d="${line}" fill="none" stroke="var(--series)" stroke-width="2"
+         stroke-linejoin="round" stroke-linecap="round"/>`;
+
+  // レジーム帯。曲線の形が「なぜそうなったか」は、そのとき何を選んでいたかで決まる。
+  // 線に色を重ねると読みにくくなるので、下に細い帯として敷く。
+  const ribbonY = m.t + ih + 6;
+  const seen = [];
+  if (curve.some(p => p.regime)) {
+    let start = 0;
+    for (let i = 1; i <= curve.length; i++) {
+      if (i === curve.length || curve[i].regime !== curve[start].regime) {
+        const r = curve[start].regime || "";
+        const x0 = X(start), x1 = i === curve.length ? X(curve.length - 1) : X(i);
+        if (r && !seen.includes(r)) seen.push(r);
+        g += `<rect x="${x0.toFixed(1)}" y="${ribbonY}" width="${Math.max(1, x1 - x0).toFixed(1)}"
+               height="${RIBBON_H}" fill="${REGIME_COLOR[r] || "var(--muted)"}" opacity="0.85"/>`;
+        start = i;
+      }
+    }
+  }
+
+  // 時刻の目盛り。全点に文字は置かず、両端＋中央だけ。
+  // 表示範囲が2日以内なら時刻、それ以上なら日付。狭い画面では中央を省いて重なりを防ぐ。
+  const spanH = curve.length > 1
+    ? (parseTs(curve[curve.length - 1].t) - parseTs(curve[0].t)) / 3600000 : 0;
+  const fmt = t => spanH <= 48 ? t.slice(11, 16) : t.slice(5, 10);
+  const idxs = narrow ? [0, curve.length - 1]
+                      : [0, Math.floor(curve.length / 2), curve.length - 1];
+  idxs.forEach((i, n) => {
+    if (curve.length < 2 && n) return;
+    const anchor = n === 0 ? "start" : (n === idxs.length - 1 ? "end" : "middle");
+    g += `<text x="${X(i)}" y="${H - 8}" text-anchor="${anchor}" fill="var(--muted)"
+           font-size="11">${fmt(curve[i].t)}</text>`;
+  });
+  // 時刻だけの表示になったときは、どの日かを軸の見出しで補う。
+  // 日付をまたぐ範囲で末日だけを出すと、前日の時刻ラベルが誤読される。
+  if (spanH <= 48 && curve.length > 1) {
+    const d0 = curve[0].t.slice(0, 10), d1 = curve[curve.length - 1].t.slice(0, 10);
+    const head = d0 === d1 ? d1 : `${d0.slice(5)} → ${d1.slice(5)}`;
+    g += `<text x="${W - m.r}" y="${m.t + 2}" text-anchor="end" fill="var(--muted)"
+           font-size="10">${head}</text>`;
+  }
+
+  g += `<line id="cross" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}"
+         stroke="var(--axis)" stroke-width="1" opacity="0"/>`;
+  g += `<circle id="dot" r="4.5" fill="var(--series)" stroke="var(--surface)"
+         stroke-width="2" opacity="0"/>`;
+  g += `<rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+  svg.innerHTML = g;
+
+  renderRegimeLegend(seen);
+  PLOT = { curve, X, Y, m, iw, W };
+  const hit = svg.querySelector("#hit");
+  hit.addEventListener("mousemove", onHover);
+  hit.addEventListener("mouseleave", hideTip);
+}
+
+function onHover(e) {
+  if (!PLOT) return;
+  const box = svg.getBoundingClientRect();
+  // タブが非表示・パネルが畳まれている等で幅が0のことがある。
+  // そのまま割ると位置がNaNになり、Math.min/max はNaNを素通しするため
+  // 添字が壊れて落ちる。ここで弾く。
+  if (!(box.width > 0)) return;
+  const scale = PLOT.W / box.width;
+  const x = (e.clientX - box.left) * scale;
+  const n = PLOT.curve.length;
+  let i = n === 1 ? 0 : Math.round((x - PLOT.m.l) / PLOT.iw * (n - 1));
+  if (!Number.isFinite(i)) return;
+  i = Math.max(0, Math.min(n - 1, i));
+  const p = PLOT.curve[i], px = PLOT.X(i), py = PLOT.Y(p.equity);
+
+  const cross = svg.querySelector("#cross"), dot = svg.querySelector("#dot");
+  cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("opacity", "1");
+  dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.setAttribute("opacity", "1");
+
+  const diff = p.equity - 1000000;
+  tip.innerHTML = `<div class="sub">${p.t}</div>
+    <div class="big">${yen(p.equity)}</div>
+    <div class="${cls(diff)}">${diff >= 0 ? "+" : ""}${Math.round(diff).toLocaleString("ja-JP")}円</div>
+    ${p.regime ? `<div class="sub">${p.regime}</div>` : ""}`;
+  tip.style.opacity = "1";
+  const left = px / scale + 14;
+  tip.style.left = Math.min(left, box.width - tip.offsetWidth - 8) + "px";
+  tip.style.top = (py / scale - 10) + "px";
+}
+
+function hideTip() {
+  tip.style.opacity = "0";
+  const c = svg.querySelector("#cross"), d = svg.querySelector("#dot");
+  if (c) c.setAttribute("opacity", "0");
+  if (d) d.setAttribute("opacity", "0");
+}
+
+/* ---- 自動更新 ---- */
+const REFRESH_MS = 15000;
+let timer = null, lastFetch = null;
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+    lastFetch = new Date();
+  } catch (e) {
+    const badge = document.getElementById("status");
+    badge.className = "badge off";
+    badge.innerHTML = '<span class="dot"></span>サーバ応答なし';
+    document.getElementById("updated").textContent =
+      "dashboard.py が停止している可能性があります";
+  }
+  tickAge();
+}
+
+// 「いつのデータか」が一目で分かるようにする。更新が止まったことに気づけないのが一番困る。
+function tickAge() {
+  const el = document.getElementById("age");
+  if (!lastFetch) { el.textContent = ""; return; }
+  const sec = Math.round((Date.now() - lastFetch) / 1000);
+  el.textContent = document.hidden
+    ? "更新停止中（タブ非表示）"
+    : (sec < 5 ? "たった今更新" : `${sec}秒前に更新`);
+  tickNext();
+}
+
+// トレーダー側が次に売買判断をする時刻までのカウントダウン。
+// 画面が15秒ごとに更新されても中身は5分に1度しか変わらないので、
+// 「動いていないのでは」と不安にならないように残り時間を出す。
+function tickNext() {
+  const el = document.getElementById("next");
+  if (!LAST || !LAST.running || !LAST.heartbeat || !LAST.interval) { el.textContent = ""; return; }
+  const due = parseTs(LAST.heartbeat) + LAST.interval * 1000;
+  const s = Math.round((due - Date.now()) / 1000);
+  el.textContent = s > 0
+    ? `次の売買判断まで ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+    : "売買判断を実行中…";
+}
+
+// タブを切り替えなくても状況が分かるよう、タイトルと favicon に反映する。
+function setTabIdentity(s) {
+  const k = s.snapshot;
+  if (k) {
+    document.title = `${Math.round(k.equity).toLocaleString("ja-JP")}円 `
+      + `${k.pnl_pct >= 0 ? "+" : ""}${k.pnl_pct.toFixed(2)}% ｜ 仮想運用`;
+  }
+  const color = s.running ? "#0ca30c" : "#d03b3b";
+  const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">`
+    + `<circle cx="16" cy="16" r="13" fill="${color}"/></svg>`;
+  let link = document.querySelector('link[rel="icon"]');
+  if (!link) { link = document.createElement("link"); link.rel = "icon"; document.head.appendChild(link); }
+  link.href = "data:image/svg+xml," + encodeURIComponent(svgIcon);
+}
+
+function start() {
+  if (timer === null) timer = setInterval(refresh, REFRESH_MS);
+}
+function stop() {
+  if (timer !== null) { clearInterval(timer); timer = null; }
+}
+
+// タブが裏に回っている間は問い合わせを止め、戻ってきたら即座に最新化する。
+// 裏で15秒ごとに叩き続けても誰も見ていない。
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { stop(); tickAge(); }
+  else { refresh(); start(); }
+});
+
+document.getElementById("now").addEventListener("click", refresh);
+
+refresh();
+start();
+setInterval(tickAge, 1000);
+addEventListener("resize", () => { if (LAST) drawChart(LAST.curve, LAST.snapshot ? LAST.snapshot.capital : 1000000); });
+</script>
+</body>
+</html>

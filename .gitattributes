@@ -1,0 +1,9 @@
+# 改行コードをリポジトリ内で統一する（環境をまたいでも差分が出ないように）
+* text=auto
+
+# バッチファイルは Windows が確実に解釈できるよう CRLF を強制
+*.bat text eol=crlf
+
+# 画像はバイナリ扱い（差分を取ろうとしない）
+*.png binary
+*.jpg binary
