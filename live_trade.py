@@ -538,7 +538,13 @@ def main() -> None:
                     help="総資産がこの額以下になったら終了（既定0＝元金ゼロ）")
     ap.add_argument("--force", action="store_true",
                     help="他インスタンスが稼働中でも強制的に起動する")
+    ap.add_argument("--ci", action="store_true",
+                    help="CI用。1回だけ実行し、ロックを作らない（実行環境が毎回変わるため）")
     args = ap.parse_args()
+
+    if args.ci:
+        args.once = True
+        args.force = True     # 前回のロックは別マシンのもの。参照しない
 
     if not args.status and not args.force:
         lock = read_lock()
@@ -563,15 +569,22 @@ def main() -> None:
     print("=" * 78)
     print("リアルタイム仮想運用  元手 1,000,000円")
     print("架空の資金によるシミュレーションです。実際の売買・送金は一切行いません。")
-    print(f"間隔 {args.interval}秒 / 手数料0.15% + スリッページ0.10% / 現物のみ")
+    print("手数料0.15% + スリッページ0.10% / 現物のみ"
+          + ("" if args.once else f" / 実行間隔 {args.interval}秒"))
     print(f"停止ライン: 総資産 {args.stop_below:,.0f}円 以下")
-    print("Ctrl+C で中断できます（状態は保存され、次回そこから再開します）")
+    if args.ci:
+        print("CIモード: 1回だけ実行して終了します（ロックは作りません）")
+    elif not args.once:
+        print("Ctrl+C で中断できます（状態は保存され、次回そこから再開します）")
     print("=" * 78)
 
     errors = 0
     try:
         while True:
-            write_lock(args.interval)      # 心拍。止まれば他インスタンスが引き継げる
+            if not args.ci:
+                # 心拍。止まれば他インスタンスが引き継げる。
+                # CIでは実行環境が毎回変わるので、残すと次回の判定を誤らせる
+                write_lock(args.interval)
             try:
                 keep_going = trader.step()
                 errors = 0
@@ -594,7 +607,10 @@ def main() -> None:
         print("\n中断しました。状態は保存済みです。"
               "`python live_trade.py` で同じところから再開できます。")
     finally:
-        clear_lock()
+        if not args.ci:
+            clear_lock()
+    if args.ci and errors:
+        raise SystemExit(1)      # 失敗はワークフロー上で赤く見えるようにする
 
 
 if __name__ == "__main__":

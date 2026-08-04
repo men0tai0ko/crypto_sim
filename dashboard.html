@@ -445,8 +445,16 @@ function setText(id, text, klass) {
 
 function render(s) {
   LAST = s;
+  const k = s.snapshot;          // バッジの表示でも使うので最初に取り出す
   const badge = document.getElementById("status");
-  if (s.running) {
+  if (s.mode === "scheduled") {
+    // GitHub Actions などの定期実行。常駐していないので「稼働中」とは意味が違う
+    badge.className = "badge on";
+    badge.innerHTML = '<span class="dot"></span>定期実行';
+    const min = Math.round((s.interval || 3600) / 60);
+    document.getElementById("updated").textContent =
+      `${min}分ごとに実行 / 最終実行 ${k ? k.ts : "—"}`;
+  } else if (s.running) {
     badge.className = "badge on";
     badge.innerHTML = '<span class="dot"></span>稼働中';
     document.getElementById("updated").textContent =
@@ -458,7 +466,6 @@ function render(s) {
       s.stale_reason ? `停止中（${s.stale_reason}）` : "トレーダーが起動していません";
   }
 
-  const k = s.snapshot;
   if (k) {
     setText("equity", yen(k.equity));
     setText("pnl", `${k.pnl >= 0 ? "+" : ""}${Math.round(k.pnl).toLocaleString("ja-JP")}円 （${pct(k.pnl_pct)}）`, cls(k.pnl));
@@ -985,11 +992,28 @@ function signature(s) {
   ]);
 }
 
+/* 取得先。ローカルサーバでは /api/state、GitHub Pages などの静的配信では
+   publish_static.py が書き出した state.json を読む（index.html 側で差し替える） */
+const STATE_URL = window.STATE_URL || "/api/state";
+
 async function refresh() {
+  let data;
   try {
-    const r = await fetch("/api/state", { cache: "no-store" });
+    const r = await fetch(STATE_URL, { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
-    const data = await r.json();
+    data = await r.json();
+  } catch (e) {
+    // ここに来るのは通信の失敗だけ。描画の失敗と混ぜると原因が隠れる
+    const badge = document.getElementById("status");
+    badge.className = "badge off";
+    badge.innerHTML = '<span class="dot"></span>取得できません';
+    document.getElementById("updated").textContent =
+      STATE_URL === "/api/state" ? "dashboard.py が停止している可能性があります"
+                                 : `${STATE_URL} を読み込めません（${e.message}）`;
+    tickAge();
+    return;
+  }
+  try {
     const sig = signature(data);
     if (sig !== lastSig) {
       render(data);          // 中身が変わったときだけ描き直す
@@ -999,11 +1023,13 @@ async function refresh() {
     }
     lastFetch = new Date();
   } catch (e) {
+    // データは取れたのに描けなかった＝こちらの不具合。取得失敗と区別して見せる
     const badge = document.getElementById("status");
     badge.className = "badge off";
-    badge.innerHTML = '<span class="dot"></span>サーバ応答なし';
+    badge.innerHTML = '<span class="dot"></span>表示エラー';
     document.getElementById("updated").textContent =
-      "dashboard.py が停止している可能性があります";
+      `画面の描画に失敗しました: ${e.message}`;
+    console.error("render failed", e);
   }
   tickAge();
 }
@@ -1025,12 +1051,20 @@ function tickAge() {
 // 「動いていないのでは」と不安にならないように残り時間を出す。
 function tickNext() {
   const el = document.getElementById("next");
-  if (!LAST || !LAST.running || !LAST.heartbeat || !LAST.interval) { el.textContent = ""; return; }
-  const due = parseTs(LAST.heartbeat) + LAST.interval * 1000;
-  const s = Math.round((due - Date.now()) / 1000);
-  el.textContent = s > 0
-    ? `次の売買判断まで ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
-    : "売買判断を実行中…";
+  if (!LAST || !LAST.running || !LAST.interval) { el.textContent = ""; return; }
+  // 常駐なら心拍から、定期実行なら最後に書かれた時刻から次回を数える
+  const base = LAST.mode === "scheduled"
+    ? (LAST.snapshot && LAST.snapshot.ts)
+    : LAST.heartbeat;
+  if (!base) { el.textContent = ""; return; }
+  const sec = Math.round((parseTs(base) + LAST.interval * 1000 - Date.now()) / 1000);
+  if (sec <= 0) {
+    el.textContent = LAST.mode === "scheduled" ? "次の実行を待っています…" : "売買判断を実行中…";
+    return;
+  }
+  const mm = Math.floor(sec / 60), ss = sec % 60;
+  el.textContent = (LAST.mode === "scheduled" ? "次の実行まで " : "次の売買判断まで ")
+    + (mm >= 60 ? `${Math.floor(mm / 60)}時間${mm % 60}分` : `${mm}:${String(ss).padStart(2, "0")}`);
 }
 
 // タブを切り替えなくても状況が分かるよう、タイトルと favicon に反映する。

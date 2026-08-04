@@ -21,3 +21,6 @@ state/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# publish_static.py の出力（実行のたびに作り直される）
+publish/
