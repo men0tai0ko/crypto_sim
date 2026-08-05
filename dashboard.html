@@ -218,7 +218,11 @@
     background: var(--regime-color, var(--axis));
   }
 
-  .chartbox { position: relative; }
+  /* overflow:hidden が無いと、ホバー中にリサイズされたとき（スマホの画面回転、
+     デスクトップでのウィンドウドラッグ中など）tip の座標が古いまま残り、
+     ページ全体に横スクロールが出ることがある。hideTip() は opacity しか
+     戻さないので、ここで確実にクリップしておく。 */
+  .chartbox { position: relative; overflow: hidden; }
   svg { display: block; width: 100%; }
   .tip {
     position: absolute; pointer-events: none; opacity: 0; transition: opacity .1s;
@@ -300,12 +304,18 @@
   tbody tr:last-child td { border-bottom: none; }
   th:first-child, td:first-child { text-align: left; font-weight: 600; }
   /* 列の出し分け。狭い画面で横スクロールさせるより、判断に効かない列から順に隠す。
-     残す優先度: 銘柄・現在値・点灯まで・状態 ＞ 推移・前日比・ストップ ＞ 移動平均比・水準 */
-  @media (max-width: 1080px) { .c-level { display: none; } }
-  @media (max-width: 900px)  { .c-ma    { display: none; } }
-  @media (max-width: 720px)  { .c-spark { display: none; } }
+     残す優先度: 銘柄・現在値・点灯まで・状態 ＞ 推移・前日比・ストップ ＞ 移動平均比・水準
+
+     .c-level / .c-chg は監視ユニバース表と売買履歴表の両方で使い回している
+     （前者は「シグナル水準/前日比」、後者は「約定単価/理由」）。#universe で
+     スコープしないと、ここでの非表示が売買履歴の別の列にも及んでしまう。 */
+  @media (max-width: 1080px) { #universe .c-level { display: none; } }
+  @media (max-width: 900px)  { #universe .c-ma    { display: none; } }
+  @media (max-width: 720px)  { #universe .c-spark { display: none; } }
   /* ストップ価格は保有ポジション表にも出るので、狭い画面ではこちらを落とす */
-  @media (max-width: 560px)  { .c-chg, .c-stop { display: none; } }
+  @media (max-width: 560px)  { #universe .c-chg, #universe .c-stop { display: none; } }
+  /* 売買履歴表は列が少ないので、ユニバース表とは別の閾値で約定単価と理由を落とす */
+  @media (max-width: 720px)  { #trades .c-level, #trades .c-chg { display: none; } }
   /* 列を削っても表が器に収まらないので、狭い画面では詰める。
      銘柄コード(BTC-JPY)は名前があれば無くても分かるため落とす。 */
   @media (max-width: 720px) {
@@ -945,7 +955,7 @@ function drawChart(fullCurve, capital) {
   svg.innerHTML = g;
 
   renderRegimeLegend(seen);
-  PLOT = { curve, X, Y, m, iw, W };
+  PLOT = { curve, X, Y, m, iw, W, capital };
   const hit = svg.querySelector("#hit");
   hit.addEventListener("mousemove", onHover);
   hit.addEventListener("mouseleave", hideTip);
@@ -970,7 +980,10 @@ function onHover(e) {
   cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("opacity", "1");
   dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.setAttribute("opacity", "1");
 
-  const diff = p.equity - 1000000;
+  // PLOT.capital は drawChart に渡された元手をそのまま保持している。
+  // ここで 1000000 を決め打ちすると、drawChart 側の挙動と食い違う
+  // （現状は CAPITAL=1,000,000 と一致しているため表面化していないだけ）
+  const diff = p.equity - PLOT.capital;
   tip.innerHTML = `<div class="sub">${p.t}</div>
     <div class="big">${yen(p.equity)}</div>
     <div class="${cls(diff)}">${diff >= 0 ? "+" : ""}${Math.round(diff).toLocaleString("ja-JP")}円</div>
@@ -1048,14 +1061,18 @@ async function refresh() {
   tickAge();
 }
 
-// 「いつのデータか」が一目で分かるようにする。更新が止まったことに気づけないのが一番困る。
+// lastFetch は「通信が成功した時刻」であって「中身が変わった時刻」ではない。
+// GitHub Pages版は30分に1回しか中身が変わらないが、ページ自体は常に応答するので
+// 15秒ごとの通信は成功し続ける。ここを「更新」と表示すると、warnIfStale() が出す
+// 「n分前のデータです」という警告と同時に「たった今更新」が出て矛盾して見える。
+// 「確認」という言葉にして、通信の生死とデータの新しさを別物として示す。
 function tickAge() {
   const el = document.getElementById("age");
   if (!lastFetch) { el.textContent = ""; return; }
   const sec = Math.round((Date.now() - lastFetch) / 1000);
   el.textContent = document.hidden
     ? "更新停止中（タブ非表示）"
-    : (sec < 5 ? "たった今更新" : `${sec}秒前に更新`);
+    : (sec < 5 ? "たった今確認" : `${sec}秒前に確認`);
   tickNext();
   warnIfStale();
 }
@@ -1115,7 +1132,14 @@ document.getElementById("now").addEventListener("click", refresh);
 refresh();
 start();
 setInterval(tickAge, 1000);
-addEventListener("resize", () => { if (LAST) drawChart(LAST.curve, LAST.snapshot ? LAST.snapshot.capital : 1000000); });
+addEventListener("resize", () => {
+  // ホバー中（ツールチップ表示中）にリサイズされると、tip.style.left は
+  // リサイズ前の座標のまま残る。drawChart はグラフ自体は再描画するが
+  // tip の位置までは触らないため、ページ幅を超えて横スクロールが出ることがある
+  // （スマホの画面回転、デスクトップでのウィンドウドラッグ中にマウスがグラフ上にある場合）。
+  hideTip();
+  if (LAST) drawChart(LAST.curve, LAST.snapshot ? LAST.snapshot.capital : 1000000);
+});
 </script>
 </body>
 </html>

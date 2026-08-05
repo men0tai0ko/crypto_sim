@@ -134,6 +134,12 @@ class Broker:
             qty = sell_jpy / tradable[sym]
             self._sell(date, sym, qty, tradable[sym], reason or "リバランス")
 
+        # 売却で手数料・スリッページぶん現金が減っている。eq を更新しないまま
+        # 買い予算を計算すると、実際より総資産をわずかに大きく見積もることになる
+        # （_buy側で現金残高にはキャップされるため資金超過にはならないが、
+        #  目標ウェイトへの追随精度がコスト分だけ甘くなる）。
+        eq = self.equity(prices)
+
         # 2) 買い
         for sym, tgt in targets.items():
             cur = self.weights(prices).get(sym, 0.0)

@@ -7,6 +7,7 @@
 「動くこと」ではなく「静かに間違わないこと」を守るのが目的。
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -247,6 +248,9 @@ def _():
     assert lt.MAX_WEIGHT == regime_mod.MAX_WEIGHT == rs.MAX_WEIGHT, "MAX_WEIGHTがズレている"
     assert lt.COOLDOWN_DAYS == regime_mod.COOLDOWN_DAYS, "COOLDOWN_DAYSがズレている"
     assert rs.RegimeSwitching().cooldown == regime_mod.COOLDOWN_DAYS
+    assert lt.ATR_N == regime_mod.ATR_N == rs.ATR_N, "ATR_Nがズレている"
+    assert lt.ATR_MULT == regime_mod.ATR_MULT == rs.ATR_MULT, "ATR_MULTがズレている"
+    assert rs.RegimeSwitching().atr_mult == regime_mod.ATR_MULT
 
 
 @test("実運用とバックテストが同じプレイブックを持っている")
@@ -312,6 +316,49 @@ def _():
     assert lt.pid_alive(os.getpid()) is True
     assert lt.pid_alive(999_999) is False
     assert lt.pid_alive(os.getpid()) is True      # 1回目で死んでいないこと
+
+
+# ============================================================
+# 状態ファイルの壊れ耐性
+# ============================================================
+
+@test("壊れた状態ファイルでも例外を投げず、新規状態にフォールバックする")
+def _():
+    """
+    _load_state() は main() のリトライ機構(errors/log_error)の外側、
+    __init__ から直接呼ばれる。ここで例外を投げると無言でプロセスごと落ち、
+    しかもCIでは同じ壊れたファイルを毎回 .prev から復元するので、
+    手動で介入するまで永久に失敗し続ける。
+    """
+    import live_trade as lt
+    tmp = tempfile.mkdtemp()
+    saved = (lt.STATE_DIR, lt.STATE_FILE)
+    lt.STATE_DIR = tmp
+    lt.STATE_FILE = os.path.join(tmp, "broken.json")
+    try:
+        with open(lt.STATE_FILE, "w", encoding="utf-8") as f:
+            f.write("{ this is not valid json ")
+        trader = lt.LiveTrader()          # 例外を投げないこと
+        assert trader.broker.cash == lt.CAPITAL
+        assert trader.broker.positions == {}
+    finally:
+        lt.STATE_DIR, lt.STATE_FILE = saved
+
+
+@test("brokerキーが欠けた状態ファイルでも例外を投げない")
+def _():
+    import live_trade as lt
+    tmp = tempfile.mkdtemp()
+    saved = (lt.STATE_DIR, lt.STATE_FILE)
+    lt.STATE_DIR = tmp
+    lt.STATE_FILE = os.path.join(tmp, "s.json")
+    try:
+        with open(lt.STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"peaks": {}}, f)   # "broker" キーが無い
+        trader = lt.LiveTrader()
+        assert trader.broker.cash == lt.CAPITAL
+    finally:
+        lt.STATE_DIR, lt.STATE_FILE = saved
 
 
 # ============================================================

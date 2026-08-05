@@ -56,10 +56,11 @@ ERROR_LOG = os.path.join(RESULTS_DIR, "live_errors.log")
 MAX_ERRORS = 30            # 連続エラーがこの回数を超えたら諦めて終了
 
 CAPITAL = 1_000_000        # 元手（円）
-ATR_N = 14
-ATR_MULT = 3.0             # トレーリングストップの幅（ATRの何倍か）
-MAX_WEIGHT = regime_mod.MAX_WEIGHT       # 1銘柄あたりの上限（regime.py に一元化）
-COOLDOWN_DAYS = regime_mod.COOLDOWN_DAYS # ストップ後に買い直さない日数（同上）
+# 以下はすべて regime.py に一元化。実運用とバックテストが同じ値を同じ場所から読む
+ATR_N = regime_mod.ATR_N
+ATR_MULT = regime_mod.ATR_MULT           # トレーリングストップの幅（ATRの何倍か）
+MAX_WEIGHT = regime_mod.MAX_WEIGHT       # 1銘柄あたりの上限
+COOLDOWN_DAYS = regime_mod.COOLDOWN_DAYS # ストップ後に買い直さない日数
 DEFAULT_INTERVAL = 300     # 5分
 
 # regime.py が返す戦略キー -> 実際の戦略
@@ -166,23 +167,34 @@ class LiveTrader:
     # ---- 状態の保存・復元 ----
     def _load_state(self) -> None:
         if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, encoding="utf-8") as f:
-                s = json.load(f)
-            self.broker = Broker.from_dict(s["broker"])
-            self.peaks = {k: float(v) for k, v in s.get("peaks", {}).items()}
-            self.targets = {k: float(v) for k, v in s.get("targets", {}).items()}
-            self.stopped = set(s.get("stopped", []))
-            self.cooldown = dict(s.get("cooldown", {}))   # 銘柄 -> 再エントリー解禁日
-            self.last_plan_date = s.get("last_plan_date")
-            self.started = s.get("started")
-            self.peak_equity = float(s.get("peak_equity", CAPITAL))
-        else:
-            self.broker = Broker(cash=float(CAPITAL))
-            self.peaks, self.targets, self.stopped = {}, {}, set()
-            self.cooldown = {}
-            self.last_plan_date = None
-            self.started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self.peak_equity = float(CAPITAL)
+            try:
+                with open(STATE_FILE, encoding="utf-8") as f:
+                    s = json.load(f)
+                self.broker = Broker.from_dict(s["broker"])
+                self.peaks = {k: float(v) for k, v in s.get("peaks", {}).items()}
+                self.targets = {k: float(v) for k, v in s.get("targets", {}).items()}
+                self.stopped = set(s.get("stopped", []))
+                self.cooldown = dict(s.get("cooldown", {}))   # 銘柄 -> 再エントリー解禁日
+                self.last_plan_date = s.get("last_plan_date")
+                self.started = s.get("started")
+                self.peak_equity = float(s.get("peak_equity", CAPITAL))
+                self.stops = {}
+                return
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                # 壊れたファイルのまま新規状態に切り替えないと、CIでは次回も
+                # 同じ壊れたファイルを .prev から復元して同じ場所で落ち続ける
+                # （このメソッドは main() のリトライ機構の外側、__init__ から
+                #  直接呼ばれるため、ここで拾わないと無言でプロセスごと落ちる）。
+                # 架空資金のシミュレーションなので、状態を失っても実害は
+                # 「元手からやり直し」で済む。壊れたまま詰むよりましと判断する。
+                print(f"[警告] 状態ファイルの読み込みに失敗しました: {exc}")
+                print(f"  {STATE_FILE} が壊れている可能性があります。元手から再開します。")
+        self.broker = Broker(cash=float(CAPITAL))
+        self.peaks, self.targets, self.stopped = {}, {}, set()
+        self.cooldown = {}
+        self.last_plan_date = None
+        self.started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.peak_equity = float(CAPITAL)
         self.stops = {}     # 銘柄 -> 現在のストップ価格（表示用・毎ループ再計算）
 
     def _save_state(self) -> None:
@@ -204,8 +216,16 @@ class LiveTrader:
 
     # ---- データ ----
     def _refresh_daily(self) -> None:
-        """日足パネルは日付が変わったときだけ取り直す。"""
-        today = datetime.now().date()
+        """
+        日足パネルは日付が変わったときだけ取り直す。
+
+        判定はUTCの日付で行う（_panel_now と同じ理由）。ここをJSTのままにすると、
+        UTCで新しい日足が確定してから次のJST 0時までの最大15時間、
+        self.panel が前日のまま古くなる。その間 _panel_now は「前日の終値を
+        ベースにした合成行」を作り続けることになり、55日高値やATRが
+        実際の値動きより遅れて反映される。
+        """
+        today = datetime.now(timezone.utc).date()
         if self.panel is not None and self.panel_date == today:
             return
         self.panel = data_mod.load_panel(force=self.panel is not None)
@@ -247,7 +267,8 @@ class LiveTrader:
             self.peaks = {s: v["peak"] for s, v in strat.state.items()}
 
         # ストップで切った直後の銘柄は買い直さない（往復売買を避ける）
-        today = str(datetime.now().date())
+        # 起点(_guardでの記録)と同じUTC基準で比較する
+        today = str(datetime.now(timezone.utc).date())
         self.cooldown = {s: d for s, d in self.cooldown.items() if d > today}
         raw = {s: w for s, w in raw.items() if s not in self.cooldown}
 
@@ -281,8 +302,8 @@ class LiveTrader:
             if p <= stop:
                 eff[sym] = 0.0
                 self.stopped.add(sym)
-                # 解禁日を記録。ここが唯一クールダウンを開始する場所
-                until = datetime.now().date() + timedelta(days=COOLDOWN_DAYS)
+                # 解禁日を記録。ここが唯一クールダウンを開始する場所（UTC基準で統一）
+                until = datetime.now(timezone.utc).date() + timedelta(days=COOLDOWN_DAYS)
                 self.cooldown[sym] = str(until)
         for sym in self.stopped:
             eff[sym] = 0.0
@@ -439,8 +460,10 @@ class LiveTrader:
         equity = self.broker.equity(prices)
         reg = regime_mod.classify(panel["close"])
 
-        # 新しい日になったら建て玉方針を練り直す
-        today = str(datetime.now().date())
+        # 新しい日になったら建て玉方針を練り直す。判定はUTC基準
+        # （日足がUTC区切りのため。JSTのままだと確定前のデータで練り直したり、
+        #  確定後も最大15時間気づかなかったりする）
+        today = str(datetime.now(timezone.utc).date())
         replanned = self.last_plan_date != today
         if replanned:
             self.targets = self._plan(panel, reg, equity)

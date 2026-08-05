@@ -53,6 +53,13 @@ MAX_WEIGHT = 0.30
 # 平坦域の中央として10日を採用。python sensitivity.py で再確認できる。
 COOLDOWN_DAYS = 10
 
+# ATRトレーリングストップのパラメータ。実運用(live_trade.py)とバックテスト
+# (strategies/regime_switch.py)の両方がここを読む。MAX_WEIGHT/COOLDOWN_DAYSと
+# 同じ理由で一元化している — 別々に持つと、片方だけ変更したときに
+# 「検証したものと違うものが動いている」状態になる。
+ATR_N = 14
+ATR_MULT = 3.0
+
 
 def classify(closes: pd.DataFrame) -> dict:
     """

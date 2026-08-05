@@ -8,8 +8,8 @@ live_trade.py は「相場付きを判定してから戦略を選ぶ」という
 実運用と揃えているもの:
   - regime.classify() による強気/中立/弱気の判定（同じ関数を呼ぶ）
   - レジームごとの戦略とエクスポージャー上限（regime.PLAYBOOK）
-  - 1銘柄あたりの上限 50%
-  - ATRトレーリングストップ（建玉後の最高値から ATR×3）
+  - 1銘柄あたりの上限、クールダウン日数、ATRストップの幅
+    （すべて regime.py の値を読む。ここに数値を書き直さないこと）
 
 実運用と違うところ（構造上どうしても揃わない点）:
   - 実運用のストップは5分ごとに現在値で判定する。ここは日足の終値でしか
@@ -21,9 +21,10 @@ import regime as regime_mod
 from .base import Strategy, Context, atr
 from .trend import DonchianTrend, FilteredEqualWeight
 
-MAX_WEIGHT = regime_mod.MAX_WEIGHT   # 実運用と同じ値を同じ場所から読む
-ATR_N = 14
-ATR_MULT = 3.0
+# 以下はすべて regime.py に一元化。実運用(live_trade.py)と同じ値を同じ場所から読む
+MAX_WEIGHT = regime_mod.MAX_WEIGHT
+ATR_N = regime_mod.ATR_N
+ATR_MULT = regime_mod.ATR_MULT
 
 
 class RegimeSwitching(Strategy):
@@ -38,9 +39,13 @@ class RegimeSwitching(Strategy):
         self.cooldown = cooldown      # ストップ後、この本数ぶん再エントリーを禁じる
         self.cool_until = {}
         self.subs = {
+            # ATRパラメータを渡さないと DonchianTrend 自身の既定値(14, 3.0)を使う
+            # 独立した経路になり、regime.py の値と気づかないうちにズレる
             "分散保有": FilteredEqualWeight(50),
-            "ドンチャン20/10": DonchianTrend(entry=20, exit=10),
-            "ドンチャン55/20": DonchianTrend(entry=55, exit=20),
+            "ドンチャン20/10": DonchianTrend(entry=20, exit=10,
+                                            atr_n=regime_mod.ATR_N, atr_mult=regime_mod.ATR_MULT),
+            "ドンチャン55/20": DonchianTrend(entry=55, exit=20,
+                                            atr_n=regime_mod.ATR_N, atr_mult=regime_mod.ATR_MULT),
         }
         self.warmup = regime_mod.TREND_MA + 2      # 200日線が必要
         self.peaks = {}          # 銘柄 -> 建玉後の最高終値

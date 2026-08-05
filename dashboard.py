@@ -72,7 +72,12 @@ def _equity_curve() -> list[dict]:
     rows = _read_csv(lt.EQUITY_LOG)
     if len(rows) > MAX_CURVE_POINTS:      # 古いほど粗くてよい
         step = len(rows) // MAX_CURVE_POINTS + 1
-        rows = rows[::step] + rows[-1:]
+        thinned = rows[::step]
+        # (len-1) が step で割り切れると最終行がすでに含まれており、
+        # 単純に + rows[-1:] すると同じ時刻・同じ値の点が2つ並んでしまう
+        if thinned[-1] is not rows[-1]:
+            thinned = thinned + rows[-1:]
+        rows = thinned
     out = []
     for r in rows:
         try:
