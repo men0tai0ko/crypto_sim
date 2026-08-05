@@ -30,10 +30,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: コードを取得
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 前回の状態を取得（初回は存在しない）
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
         with:
           ref: data
