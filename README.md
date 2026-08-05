@@ -3,6 +3,10 @@
 実際の値動き（yfinance / JPY建て日足）を使い、**架空の100万円**で自動売買を検証する。
 実売買・送金は一切行わない。投資助言でもない。
 
+**運用状況（ダッシュボード）: https://men0tai0ko.github.io/crypto_sim/**
+GitHub Actionsが30分ごとに自動売買し、この画面に反映する。表示専用で、
+この画面自体は売買には一切関与しない。スマホからも見られる。
+
 ## GitHub Actions で自動実行する
 
 PCを起動していなくても24時間動かしたい場合、`.github/workflows/trade.yml` が
@@ -15,6 +19,7 @@ PCを起動していなくても24時間動かしたい場合、`.github/workflo
    **Read and write permissions** にする（状態の書き戻しに必要）
 3. Actions タブでワークフローを有効化する（初回は手動実行で確認できる）
 4. 画面を見たい場合は Settings → Pages で **Branch: data / (root)** を選ぶ
+   （`https://<ユーザー名>.github.io/<リポジトリ名>/` で公開される）
 
 ### 仕組み
 
