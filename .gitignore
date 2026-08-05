@@ -17,6 +17,12 @@ results/
 # リアルタイム運用の状態・ロック・スナップショット（5分ごとに書き換わる）
 state/
 
+# 秘密情報。誤って作業フォルダに置いても絶対にコミットしない
+token.txt
+*.token
+.env
+secrets/
+
 # OS
 Thumbs.db
 desktop.ini

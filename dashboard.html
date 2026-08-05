@@ -242,7 +242,11 @@
   }
 
   /* 期間フィルタ・操作ボタン */
-  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chart-controls {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 10px; margin-bottom: 14px;
+  }
   button {
     font: inherit; font-size: 12px; padding: 5px 14px; border-radius: 999px;
     border: 1px solid var(--border); background: var(--pill-bg); color: var(--ink2);
@@ -401,11 +405,19 @@
 
   <div class="card">
     <h2>資産推移</h2>
-    <div class="filters" id="ranges">
-      <button type="button" data-h="24">24時間</button>
-      <button type="button" data-h="168">7日</button>
-      <button type="button" data-h="720">30日</button>
-      <button type="button" data-h="0" class="on">全期間</button>
+    <div class="chart-controls">
+      <div class="filters" id="ranges">
+        <button type="button" data-h="24">24時間</button>
+        <button type="button" data-h="168">7日</button>
+        <button type="button" data-h="720">30日</button>
+        <button type="button" data-h="0" class="on">全期間</button>
+      </div>
+      <!-- 「増減」は記録間隔ごとの差分バー。将来「日次」を第3の選択肢として
+           ここに追加する（サーバ側の集約単位を切り替える形で拡張する想定）。 -->
+      <div class="filters" id="chartmode">
+        <button type="button" data-mode="line" class="on">総資産</button>
+        <button type="button" data-mode="bar">増減</button>
+      </div>
     </div>
     <div class="chartbox">
       <svg id="chart" role="img" aria-label="総資産の推移"></svg>
@@ -705,11 +717,18 @@ function gapBar(gap) {
 }
 
 // 帯は色だけで意味を持たせない。出現したレジームぶんだけ凡例を出す。
-function renderRegimeLegend(seen) {
+function renderRegimeLegend(seen, mode) {
   const el = document.getElementById("rlegend");
-  if (!seen || !seen.length) { el.innerHTML = ""; return; }
-  el.innerHTML = '<span class="sub">グラフ下の帯＝そのときの相場付き：</span>'
-    + seen.map(r => `<span class="lg"><span class="sw" style="background:${REGIME_COLOR[r]}"></span>${r}</span>`).join("");
+  const parts = [];
+  if (mode === "bar") {
+    parts.push(`<span class="lg"><span class="sw" style="background:var(--good)"></span>増加</span>`
+      + `<span class="lg"><span class="sw" style="background:var(--bad)"></span>減少</span>`);
+  }
+  if (seen && seen.length) {
+    parts.push('<span class="sub">グラフ下の帯＝そのときの相場付き：</span>'
+      + seen.map(r => `<span class="lg"><span class="sw" style="background:${REGIME_COLOR[r]}"></span>${r}</span>`).join(""));
+  }
+  el.innerHTML = parts.join(" ");
 }
 
 // エラーが無いときはカードごと隠す。常設すると「異常が普通」に見えてしまう。
@@ -831,7 +850,74 @@ document.getElementById("ranges").addEventListener("click", e => {
   if (LAST) drawChart(LAST.curve, LAST.snapshot ? LAST.snapshot.capital : 1000000);
 });
 
+/* 表示モード。'line'=総資産の推移、'bar'=記録間隔ごとの増減。
+   将来 'bar-daily'（日次集約）を第3の値として足す想定。 */
+let CHART_MODE = "line";
+document.getElementById("chartmode").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  CHART_MODE = b.dataset.mode;
+  e.currentTarget.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+  if (LAST) drawChart(LAST.curve, LAST.snapshot ? LAST.snapshot.capital : 1000000);
+});
+
+/* 時刻の目盛り。線・棒どちらのグラフからも呼ぶ共通ロジック。
+   全点に文字は置かず、両端＋中央だけ。表示範囲が2日以内なら時刻、
+   それ以上なら日付。狭い画面では中央を省いて重なりを防ぐ。 */
+function timeAxisLabels(curve, X, W, H, m, narrow) {
+  let g = "";
+  const spanH = curve.length > 1
+    ? (parseTs(curve[curve.length - 1].t) - parseTs(curve[0].t)) / 3600000 : 0;
+  const fmt = t => spanH <= 48 ? t.slice(11, 16) : t.slice(5, 10);
+  const idxs = narrow ? [0, curve.length - 1]
+                      : [0, Math.floor(curve.length / 2), curve.length - 1];
+  idxs.forEach((i, n) => {
+    if (curve.length < 2 && n) return;
+    const anchor = n === 0 ? "start" : (n === idxs.length - 1 ? "end" : "middle");
+    g += `<text x="${X(i)}" y="${H - 8}" text-anchor="${anchor}" fill="var(--muted)"
+           font-size="11">${fmt(curve[i].t)}</text>`;
+  });
+  // 時刻だけの表示になったときは、どの日かを軸の見出しで補う。
+  // 日付をまたぐ範囲で末日だけを出すと、前日の時刻ラベルが誤読される。
+  if (spanH <= 48 && curve.length > 1) {
+    const d0 = curve[0].t.slice(0, 10), d1 = curve[curve.length - 1].t.slice(0, 10);
+    const head = d0 === d1 ? d1 : `${d0.slice(5)} → ${d1.slice(5)}`;
+    g += `<text x="${W - m.r}" y="${m.t + 2}" text-anchor="end" fill="var(--muted)"
+           font-size="10">${head}</text>`;
+  }
+  return g;
+}
+
+/* レジーム帯。曲線/棒の形が「なぜそうなったか」は、そのとき何を選んでいたかで決まる。
+   マークに直接色を重ねると読みにくくなるので、下に細い帯として敷く。
+   戻り値の seen は renderRegimeLegend に渡す出現順リスト。 */
+function regimeRibbon(curve, X, ribbonY, RIBBON_H) {
+  let g = "";
+  const seen = [];
+  if (!curve.some(p => p.regime)) return { svg: g, seen };
+  let start = 0;
+  for (let i = 1; i <= curve.length; i++) {
+    if (i === curve.length || curve[i].regime !== curve[start].regime) {
+      const r = curve[start].regime || "";
+      const x0 = X(start), x1 = i === curve.length ? X(curve.length - 1) : X(i);
+      if (r && !seen.includes(r)) seen.push(r);
+      g += `<rect x="${x0.toFixed(1)}" y="${ribbonY}" width="${Math.max(1, x1 - x0).toFixed(1)}"
+             height="${RIBBON_H}" fill="${REGIME_COLOR[r] || "var(--muted)"}" opacity="0.85"/>`;
+      start = i;
+    }
+  }
+  return { svg: g, seen };
+}
+
+/* CHART_MODE を見て線・棒どちらかを描く。個々の drawXChart はホバー用の
+   イベントリスナーも自分で張り直す（前回のリスナーは innerHTML の書き換えで
+   要素ごと消えるので、張り直し漏れの心配はない）。 */
 function drawChart(fullCurve, capital) {
+  if (CHART_MODE === "bar") drawBarChart(fullCurve, capital);
+  else drawLineChart(fullCurve, capital);
+}
+
+function drawLineChart(fullCurve, capital) {
   const curve = filterCurve(fullCurve);
   const W = svg.clientWidth || 800, H = 260;
   const narrow = W < 460;
@@ -846,6 +932,7 @@ function drawChart(fullCurve, capital) {
     svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle"
       fill="var(--muted)" font-size="13">記録がまだありません</text>`;
     PLOT = null;
+    renderRegimeLegend([]);
     return;
   }
 
@@ -907,45 +994,10 @@ function drawChart(fullCurve, capital) {
            fill="var(--series)" stroke="var(--surface)" stroke-width="2"/>`;
   }
 
-  // レジーム帯。曲線の形が「なぜそうなったか」は、そのとき何を選んでいたかで決まる。
-  // 線に色を重ねると読みにくくなるので、下に細い帯として敷く。
   const ribbonY = m.t + ih + 6;
-  const seen = [];
-  if (curve.some(p => p.regime)) {
-    let start = 0;
-    for (let i = 1; i <= curve.length; i++) {
-      if (i === curve.length || curve[i].regime !== curve[start].regime) {
-        const r = curve[start].regime || "";
-        const x0 = X(start), x1 = i === curve.length ? X(curve.length - 1) : X(i);
-        if (r && !seen.includes(r)) seen.push(r);
-        g += `<rect x="${x0.toFixed(1)}" y="${ribbonY}" width="${Math.max(1, x1 - x0).toFixed(1)}"
-               height="${RIBBON_H}" fill="${REGIME_COLOR[r] || "var(--muted)"}" opacity="0.85"/>`;
-        start = i;
-      }
-    }
-  }
-
-  // 時刻の目盛り。全点に文字は置かず、両端＋中央だけ。
-  // 表示範囲が2日以内なら時刻、それ以上なら日付。狭い画面では中央を省いて重なりを防ぐ。
-  const spanH = curve.length > 1
-    ? (parseTs(curve[curve.length - 1].t) - parseTs(curve[0].t)) / 3600000 : 0;
-  const fmt = t => spanH <= 48 ? t.slice(11, 16) : t.slice(5, 10);
-  const idxs = narrow ? [0, curve.length - 1]
-                      : [0, Math.floor(curve.length / 2), curve.length - 1];
-  idxs.forEach((i, n) => {
-    if (curve.length < 2 && n) return;
-    const anchor = n === 0 ? "start" : (n === idxs.length - 1 ? "end" : "middle");
-    g += `<text x="${X(i)}" y="${H - 8}" text-anchor="${anchor}" fill="var(--muted)"
-           font-size="11">${fmt(curve[i].t)}</text>`;
-  });
-  // 時刻だけの表示になったときは、どの日かを軸の見出しで補う。
-  // 日付をまたぐ範囲で末日だけを出すと、前日の時刻ラベルが誤読される。
-  if (spanH <= 48 && curve.length > 1) {
-    const d0 = curve[0].t.slice(0, 10), d1 = curve[curve.length - 1].t.slice(0, 10);
-    const head = d0 === d1 ? d1 : `${d0.slice(5)} → ${d1.slice(5)}`;
-    g += `<text x="${W - m.r}" y="${m.t + 2}" text-anchor="end" fill="var(--muted)"
-           font-size="10">${head}</text>`;
-  }
+  const ribbon = regimeRibbon(curve, X, ribbonY, RIBBON_H);
+  g += ribbon.svg;
+  g += timeAxisLabels(curve, X, W, H, m, narrow);
 
   g += `<line id="cross" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}"
          stroke="var(--axis)" stroke-width="1" opacity="0"/>`;
@@ -954,34 +1006,120 @@ function drawChart(fullCurve, capital) {
   g += `<rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
   svg.innerHTML = g;
 
-  renderRegimeLegend(seen);
-  PLOT = { curve, X, Y, m, iw, W, capital };
+  renderRegimeLegend(ribbon.seen);
+  PLOT = { curve, X, Y, m, iw, W, capital, mode: "line" };
   const hit = svg.querySelector("#hit");
-  hit.addEventListener("mousemove", onHover);
+  hit.addEventListener("mousemove", onHoverLine);
   hit.addEventListener("mouseleave", hideTip);
 }
 
-function onHover(e) {
-  if (!PLOT) return;
+/* 記録間隔ごとの増減（delta）を diverging bar で見せる。
+   1件目は前の記録が無いので delta が無く、棒は立たない（filter で除く）。
+   将来「日次」を足すときは、ここで日ごとに delta を合算した配列を渡す
+   drawBarChart(dailyCurve, capital, { unit: "day" }) のような形を想定。 */
+function drawBarChart(fullCurve, capital) {
+  const filtered = filterCurve(fullCurve);
+  const curve = (filtered || []).filter(p => p.delta !== null && p.delta !== undefined);
+  const W = svg.clientWidth || 800, H = 260;
+  const narrow = W < 460;
+  const m = { t: 12, r: 14, b: 44, l: narrow ? 50 : 74 };
+  const RIBBON_H = 8;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("height", H);
+
+  if (curve.length === 0) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle"
+      fill="var(--muted)" font-size="13">まだ増減の記録がありません</text>`;
+    PLOT = null;
+    renderRegimeLegend([]);
+    return;
+  }
+
+  const deltas = curve.map(p => p.delta);
+  // ゼロ除算・全ゼロ対策。最小でも1円幅は確保する
+  let maxAbs = Math.max(...deltas.map(Math.abs), 1) * 1.15;
+  const lo = -maxAbs, hi = maxAbs;
+  const dec = maxAbs < 200000 ? 1 : 0;
+
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const X = i => m.l + (i + 0.5) / curve.length * iw;   // バー中心のX座標
+  const Y = v => m.t + (1 - (v - lo) / (hi - lo)) * ih;
+  const yZero = Y(0);
+  // dataviz: 塗り同士は2pxの隙間で区切る（線で区切らない）
+  const barGap = 2;
+  const barW = Math.max(1, iw / curve.length - barGap);
+
+  let g = "";
+  // 横罫線と目盛り（0を中心に上下2本）
+  for (const frac of [-1, 0, 1]) {
+    const v = frac * maxAbs, y = Y(v);
+    g += `<line x1="${m.l}" y1="${y}" x2="${W - m.r}" y2="${y}"
+           stroke="var(--grid)" stroke-width="1"/>`;
+    g += `<text x="${m.l - 8}" y="${y + 4}" text-anchor="end" fill="var(--muted)"
+           font-size="11">${v > 0 ? "+" : ""}${(v / 10000).toFixed(dec)}万</text>`;
+  }
+  // ゼロラインは基準線として少し太くする
+  g += `<line x1="${m.l}" y1="${yZero}" x2="${W - m.r}" y2="${yZero}"
+         stroke="var(--axis)" stroke-width="1.4"/>`;
+
+  curve.forEach((p, i) => {
+    const x = X(i) - barW / 2;
+    const yTop = Y(Math.max(0, p.delta));
+    const yBot = Y(Math.min(0, p.delta));
+    const color = p.delta >= 0 ? "var(--good)" : "var(--bad)";
+    g += `<rect class="bar" data-i="${i}" x="${x.toFixed(1)}" y="${yTop.toFixed(1)}"
+           width="${barW.toFixed(1)}" height="${Math.max(1.5, yBot - yTop).toFixed(1)}"
+           rx="2" fill="${color}"/>`;
+  });
+
+  const ribbonY = m.t + ih + 6;
+  const ribbon = regimeRibbon(curve, X, ribbonY, RIBBON_H);
+  g += ribbon.svg;
+  g += timeAxisLabels(curve, X, W, H, m, narrow);
+
+  // ホバー中のバーを示す縁取り（線グラフの cross/dot に相当）
+  g += `<rect id="barHi" x="0" y="${m.t}" width="${barW}" height="${ih}"
+         fill="none" stroke="var(--ink)" stroke-width="1.5" rx="2" opacity="0"/>`;
+  g += `<rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+  svg.innerHTML = g;
+
+  renderRegimeLegend(ribbon.seen, "bar");
+  PLOT = { curve, X, Y, m, iw, W, capital, mode: "bar", barW };
+  const hit = svg.querySelector("#hit");
+  hit.addEventListener("mousemove", onHoverBar);
+  hit.addEventListener("mouseleave", hideTip);
+}
+
+/* イベントからバー/点のインデックスを引く共通処理。線・棒どちらも
+   「x座標→最寄りのインデックス」という点では同じなので、ここだけ共有する。 */
+function hoverIndex(e) {
   const box = svg.getBoundingClientRect();
   // タブが非表示・パネルが畳まれている等で幅が0のことがある。
   // そのまま割ると位置がNaNになり、Math.min/max はNaNを素通しするため
   // 添字が壊れて落ちる。ここで弾く。
-  if (!(box.width > 0)) return;
+  if (!(box.width > 0)) return null;
   const scale = PLOT.W / box.width;
   const x = (e.clientX - box.left) * scale;
   const n = PLOT.curve.length;
   let i = n === 1 ? 0 : Math.round((x - PLOT.m.l) / PLOT.iw * (n - 1));
-  if (!Number.isFinite(i)) return;
+  if (!Number.isFinite(i)) return null;
   i = Math.max(0, Math.min(n - 1, i));
+  return { i, box, scale };
+}
+
+function onHoverLine(e) {
+  if (!PLOT) return;
+  const hit = hoverIndex(e);
+  if (!hit) return;
+  const { i, box, scale } = hit;
   const p = PLOT.curve[i], px = PLOT.X(i), py = PLOT.Y(p.equity);
 
   const cross = svg.querySelector("#cross"), dot = svg.querySelector("#dot");
   cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("opacity", "1");
   dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.setAttribute("opacity", "1");
 
-  // PLOT.capital は drawChart に渡された元手をそのまま保持している。
-  // ここで 1000000 を決め打ちすると、drawChart 側の挙動と食い違う
+  // PLOT.capital は drawLineChart に渡された元手をそのまま保持している。
+  // ここで 1000000 を決め打ちすると、drawLineChart 側の挙動と食い違う
   // （現状は CAPITAL=1,000,000 と一致しているため表面化していないだけ）
   const diff = p.equity - PLOT.capital;
   tip.innerHTML = `<div class="sub">${p.t}</div>
@@ -994,11 +1132,36 @@ function onHover(e) {
   tip.style.top = (py / scale - 10) + "px";
 }
 
+function onHoverBar(e) {
+  if (!PLOT) return;
+  const hit = hoverIndex(e);
+  if (!hit) return;
+  const { i, box, scale } = hit;
+  const p = PLOT.curve[i], px = PLOT.X(i);
+  const d = p.delta;
+
+  const barHi = svg.querySelector("#barHi");
+  barHi.setAttribute("x", (px - PLOT.barW / 2).toFixed(1));
+  barHi.setAttribute("opacity", "1");
+
+  tip.innerHTML = `<div class="sub">${p.t}</div>
+    <div class="big ${cls(d)}">${d >= 0 ? "+" : ""}${Math.round(d).toLocaleString("ja-JP")}円</div>
+    <div class="sub">総資産 ${yen(p.equity)}</div>
+    ${p.regime ? `<div class="sub">${p.regime}</div>` : ""}`;
+  tip.style.opacity = "1";
+  const py = PLOT.Y(Math.max(0, d));
+  const left = px / scale + 14;
+  tip.style.left = Math.min(left, box.width - tip.offsetWidth - 8) + "px";
+  tip.style.top = (py / scale - 10) + "px";
+}
+
 function hideTip() {
   tip.style.opacity = "0";
   const c = svg.querySelector("#cross"), d = svg.querySelector("#dot");
   if (c) c.setAttribute("opacity", "0");
   if (d) d.setAttribute("opacity", "0");
+  const bh = svg.querySelector("#barHi");
+  if (bh) bh.setAttribute("opacity", "0");
 }
 
 /* ---- 自動更新 ---- */

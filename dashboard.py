@@ -79,12 +79,19 @@ def _equity_curve() -> list[dict]:
             thinned = thinned + rows[-1:]
         rows = thinned
     out = []
+    prev_equity = None
     for r in rows:
         try:
-            out.append({"t": r["日時"], "equity": float(r["総資産(円)"]),
-                        "regime": r.get("レジーム", "")})
+            equity = float(r["総資産(円)"])
         except (KeyError, ValueError):
             continue
+        # 前レコードからの増減。間引き後の隣接点同士の差になるので、
+        # 間引きで消えた区間ぶんも合算した「正味の変化」を表す（それで正しい）。
+        # 3（日次集約）を実装する際は、ここに集約単位を切り替える分岐を足す。
+        delta = None if prev_equity is None else equity - prev_equity
+        out.append({"t": r["日時"], "equity": equity,
+                    "regime": r.get("レジーム", ""), "delta": delta})
+        prev_equity = equity
     return out
 
 
