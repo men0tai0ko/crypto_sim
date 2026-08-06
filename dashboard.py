@@ -23,7 +23,7 @@ import csv
 import json
 import os
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote
 
@@ -93,8 +93,13 @@ def _equity_curve() -> list[dict]:
             continue
         peak = equity if peak is None else max(peak, equity)
         dd_pct = (equity / peak - 1) * 100 if peak else 0.0
+        try:
+            expo_pct = float(r["建玉率(%)"])
+        except (KeyError, ValueError):
+            expo_pct = None
         parsed.append({"t": r["日時"], "equity": equity,
-                       "regime": r.get("レジーム", ""), "dd_pct": dd_pct})
+                       "regime": r.get("レジーム", ""), "dd_pct": dd_pct,
+                       "expo_pct": expo_pct})
 
     if len(parsed) > MAX_CURVE_POINTS:    # 古いほど粗くてよい
         step = len(parsed) // MAX_CURVE_POINTS + 1
@@ -131,15 +136,77 @@ def _trades() -> list[dict]:
     return out
 
 
+_HOLD_LABELS = ["0〜1日", "2〜5日", "6〜10日", "11〜20日", "21日以上"]
+
+
+def _hold_bucket(days: float) -> str:
+    if days <= 1:
+        return _HOLD_LABELS[0]
+    if days <= 5:
+        return _HOLD_LABELS[1]
+    if days <= 10:
+        return _HOLD_LABELS[2]
+    if days <= 20:
+        return _HOLD_LABELS[3]
+    return _HOLD_LABELS[4]
+
+
+def _holding_periods(rows: list[dict]) -> dict:
+    """
+    銘柄ごとに「無し→有り」に転じた最初の買いを建玉日、
+    「有り→無し」に戻った売りを手仕舞い日とみなして保有日数を求める。
+    broker.py はポジションを銘柄単位で合算管理しており個別ロットを
+    区別しないため、この定義は実際の管理単位と一致する
+    （途中で買い増しても、建玉日は最初の買いのまま動かさない）。
+    """
+    qty: dict[str, float] = {}
+    entry: dict[str, str] = {}
+    days_list: list[float] = []
+    for r in rows:
+        try:
+            sym, side, q, ts = r["銘柄"], r["売買"], float(r["数量"]), r["日時"]
+        except (KeyError, ValueError):
+            continue
+        before = qty.get(sym, 0.0)
+        if side == "買":
+            if before <= 1e-12:
+                entry[sym] = ts
+            qty[sym] = before + q
+        elif side == "売":
+            after = before - q
+            qty[sym] = after
+            if after <= 1e-12 and sym in entry:
+                try:
+                    d0 = datetime.strptime(entry[sym], "%Y-%m-%d %H:%M:%S")
+                    d1 = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                    days_list.append((d1 - d0).total_seconds() / 86400)
+                except ValueError:
+                    pass
+                del entry[sym]
+    if not days_list:
+        return {"count": 0, "buckets": []}
+    counts = {label: 0 for label in _HOLD_LABELS}
+    for d in days_list:
+        counts[_hold_bucket(d)] += 1
+    days_list.sort()
+    return {
+        "count": len(days_list),
+        "median_days": days_list[len(days_list) // 2],
+        "buckets": [{"label": label, "count": counts[label]} for label in _HOLD_LABELS],
+    }
+
+
 def _trade_stats() -> dict:
     """
     決済済みの売買だけを集計する。含み損益は snapshot 側にあるので、
     ここでは「確定した結果」だけを見る。運用が長引くほど、
     今の評価額より「これまで勝てているか」が判断材料になる。
     """
+    rows = _read_csv(lt.TRADES_LOG)
+    holding = _holding_periods(rows)
     realized = []
     by_symbol: dict[str, dict] = {}
-    for r in _read_csv(lt.TRADES_LOG):
+    for r in rows:
         if r.get("売買") != "売" or not r.get("実現損益(円)"):
             continue
         try:
@@ -155,7 +222,7 @@ def _trade_stats() -> dict:
         s["count"] += 1
         s["wins"] += 1 if v > 0 else 0
     if not realized:
-        return {"count": 0, "by_symbol": []}
+        return {"count": 0, "by_symbol": [], "holding": holding}
     wins = [v for v in realized if v > 0]
     losses = [v for v in realized if v <= 0]
     gross_win, gross_loss = sum(wins), -sum(losses)
@@ -170,6 +237,7 @@ def _trade_stats() -> dict:
         "best": max(realized),
         "worst": min(realized),
         "by_symbol": sorted(by_symbol.values(), key=lambda s: -s["realized"]),
+        "holding": holding,
     }
 
 
@@ -185,6 +253,27 @@ def _recent_errors(limit: int = 5) -> list[str]:
     except OSError:
         return []
     return lines[-limit:][::-1]
+
+
+def _error_frequency(days: int = 14) -> list[dict]:
+    """
+    直近days日分、日ごとのエラー発生件数。直近5件（_recent_errors）だけでは
+    「頻度が増えている」という傾向には気づけない。1〜2回の通信断はノイズだが、
+    発生頻度そのものが増えているのは配信元や実行環境の劣化サイン。
+    """
+    try:
+        with open(lt.ERROR_LOG, encoding="utf-8") as f:
+            lines = [l for l in f if l.startswith("[")]
+    except OSError:
+        lines = []
+    counts: dict[str, int] = {}
+    for line in lines:
+        # 形式は "[YYYY-MM-DD HH:MM:SS] (n回目) ..."（log_error参照）
+        day = line[1:11]
+        counts[day] = counts.get(day, 0) + 1
+    today = datetime.now().date()
+    return [{"date": str(today - timedelta(days=i)), "count": counts.get(str(today - timedelta(days=i)), 0)}
+            for i in range(days - 1, -1, -1)]
 
 
 def build_state() -> dict:
@@ -209,6 +298,7 @@ def build_state() -> dict:
         "trades": _trades(),
         "stats": _trade_stats(),
         "errors": _recent_errors(),
+        "error_freq": _error_frequency(),
         "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 

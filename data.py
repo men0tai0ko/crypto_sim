@@ -119,6 +119,20 @@ def _mark_gap_retry() -> None:
         f.write(datetime.now().isoformat())
 
 
+def last_gap_retry() -> str | None:
+    """
+    直近の「欠損を検知して取り直した」時刻（無ければ None）。
+    ダッシュボード側で「自動で取り直しは試みたが、それでも埋まっていない」
+    ことを示すために使う。GitHub Actions は毎回まっさらな環境で走るため
+    （cache/はGit管理外）、この情報はローカルの常駐実行でのみ意味を持つ。
+    """
+    try:
+        with open(_GAP_RETRY_FILE, encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
 def find_gaps(panel: dict, days: int = 30) -> list[str]:
     """
     直近 days 日のうち、日足が欠けている日付を返す。

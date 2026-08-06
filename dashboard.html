@@ -275,6 +275,11 @@
     background: linear-gradient(90deg, var(--good), var(--good));
     box-shadow: 0 0 10px -2px var(--good);
   }
+  /* ストップに近いことは「達成」ではなく「警戒」なので、reachedとは逆の色にする */
+  .hbar .fill.danger {
+    background: linear-gradient(90deg, var(--bad), var(--bad));
+    box-shadow: 0 0 10px -2px var(--bad);
+  }
   .spark { display: block; }
   /* 資産の内訳バー。区切りは背景色の隙間で作る（線を引かない） */
   .cbar {
@@ -320,6 +325,8 @@
   @media (max-width: 720px)  { #universe .c-spark { display: none; } }
   /* ストップ価格は保有ポジション表にも出るので、狭い画面ではこちらを落とす */
   @media (max-width: 560px)  { #universe .c-chg, #universe .c-stop { display: none; } }
+  /* 保有ポジション表のバーは数値のストップ列と情報が重なるので、狭い画面では先に落とす */
+  @media (max-width: 640px)  { #positions .c-stopgap { display: none; } }
   /* 売買履歴表は列が少ないので、ユニバース表とは別の閾値で約定単価と理由を落とす */
   @media (max-width: 720px)  { #trades .c-level, #trades .c-chg { display: none; } }
   /* 列を削っても表が器に収まらないので、狭い画面では詰める。
@@ -382,7 +389,8 @@
     <div class="stats">
       <div class="stat"><div class="k">現金</div><div class="v" id="cash">—</div></div>
       <div class="stat"><div class="k">評価額</div><div class="v" id="invested">—</div></div>
-      <div class="stat"><div class="k">建玉率</div><div class="v" id="expo">—</div></div>
+      <div class="stat"><div class="k">建玉率</div><div class="v" id="expo">—</div>
+        <div id="exposprk" style="margin-top:3px"></div></div>
       <div class="stat"><div class="k">ピーク比</div><div class="v" id="dd">—</div></div>
       <div class="stat"><div class="k">運用開始</div><div class="v" id="started">—</div></div>
     </div>
@@ -460,6 +468,7 @@
   <div class="card" id="errcard" hidden>
     <h2>直近のエラー</h2>
     <div id="errors"></div>
+    <div id="errfreq"></div>
     <div class="sub" style="margin-top:8px">
       通信断などで失敗したときの記録。ループは止まらず再試行しています（全文は results/live_errors.log）。
     </div>
@@ -518,6 +527,7 @@ function render(s) {
       "--regime-color", REGIME_COLOR[k.regime] || "var(--axis)");
     setText("cap", `エクスポージャー上限 ${k.cap_pct.toFixed(0)}%`);
     setText("reason", "根拠: " + k.reason);
+    renderExpoSpark(s.curve);
     renderRegimeBars(k);
     renderComposition(k);
     renderPositions(k);
@@ -528,6 +538,7 @@ function render(s) {
     ["equity", "pnl", "cash", "invested", "expo", "dd", "started",
      "regime", "strategy"].forEach(id => setText(id, "—", ""));
     setText("cap", ""); setText("reason", "");
+    document.getElementById("exposprk").innerHTML = "";
     document.getElementById("regimebars").innerHTML = "";
     document.getElementById("compo").innerHTML = "";
     document.getElementById("periodsummary").innerHTML = "";
@@ -540,7 +551,7 @@ function render(s) {
   }
   renderTrades(s.trades);
   renderStats(s.stats);
-  renderErrors(s.errors);
+  renderErrors(s.errors, s.error_freq);
   drawChart(s.curve, k ? k.capital : 1000000);
   if (k) renderPeriodSummary(s.curve);
   updateDownloadLinks(s);
@@ -576,8 +587,14 @@ function warnIfStale() {
   }
   // 日足の抜けは指標の集計期間を静かにずらす。気づけるように表に出す。
   if (k.data_gaps && k.data_gaps.length) {
+    // 自動取り直し（data.load_panel の1時間おきリトライ）を試みたのに
+    // まだ埋まっていない場合は、その旨を添える。試行自体がまだなら
+    // 「自然に埋まるかもしれない一時的な抜け」の可能性が残っている段階。
+    const retryNote = k.data_gap_retried_at
+      ? `自動での取り直しも試みましたが埋まっていません（最終試行 ${k.data_gap_retried_at.slice(0, 16).replace("T", " ")}）。`
+      : "";
     msgs.push(`⚠ 日足データが ${k.data_gaps.length}日ぶん欠けています`
-      + `（${k.data_gaps.join("、")}）。配信元の不具合です。`
+      + `（${k.data_gaps.join("、")}）。配信元の不具合です。${retryNote}`
       + `移動平均やATRの集計期間がその日数ぶんずれます。`);
   }
   el.innerHTML = msgs.map(m => `<div>${m}</div>`).join("");
@@ -630,18 +647,23 @@ function renderPositions(k) {
     box.innerHTML = '<div class="empty">保有なし（現金100%）</div>';
     return;
   }
-  const rows = k.positions.map(p => `
+  const rows = k.positions.map(p => {
+    const gapPct = (p.stop && p.price) ? (p.price - p.stop) / p.price * 100 : null;
+    return `
     <tr>
       <td>${p.name}<span class="sub"> ${p.symbol}</span></td>
       <td>${p.price ? num(p.price, dec(p.price)) : "—"}</td>
       <td>${p.stop ? num(p.stop, dec(p.stop)) : "—"}</td>
+      <td class="c-stopgap">${stopGapBar(gapPct)}</td>
       <td>${yen(p.value)}</td>
       <td class="${cls(p.upnl)}">${p.upnl >= 0 ? "+" : ""}${Math.round(p.upnl).toLocaleString("ja-JP")}円</td>
       <td class="${cls(p.upnl)}">${pct(p.upnl_pct)}</td>
       <td>${p.weight.toFixed(1)}%</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
   box.innerHTML = `<table><thead><tr>
-      <th scope="col">銘柄</th><th>現在値</th><th>ストップ</th><th>評価額</th>
+      <th scope="col">銘柄</th><th>現在値</th><th>ストップ</th>
+      <th class="c-stopgap">ストップまで</th><th>評価額</th>
       <th>含み損益</th><th>率</th><th>構成比</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
 }
@@ -699,6 +721,16 @@ function renderUniverse(k) {
     + `　バーは点灯までの近さ（${GAP_REF}%以上離れていれば空、到達で満タン）。`;
 }
 
+/* 建玉率（エクスポージャー）の推移ミニグラフ。「建玉率」の統計値の下に添えて、
+   いまの数字だけでなく「上限まで攻めていた時期」が時系列で見えるようにする。
+   live_equity.csv には元から建玉率(%)列があるので、サーバ側(dashboard.py)の
+   _equity_curve が返す expo_pct をそのまま使う（新規のログは不要）。 */
+function renderExpoSpark(curve) {
+  const box = document.getElementById("exposprk");
+  const vals = (curve || []).map(p => p.expo_pct).filter(v => v !== null && v !== undefined);
+  box.innerHTML = vals.length >= 2 ? sparkline(vals.slice(-120), 130, 26) : "";
+}
+
 /* 一覧内の小さな折れ線。1行1系列なので凡例は不要 */
 function sparkline(vals, w = 92, h = 26) {
   if (!vals || vals.length < 2) return "—";
@@ -722,6 +754,21 @@ function daysUntil(dateStr) {
   const d = new Date(dateStr.replace(/-/g, "/"));
   const today = new Date(); today.setHours(0, 0, 0, 0);
   return Math.max(0, Math.ceil((d - today) / 86400000));
+}
+
+/* 保有ポジションの「ストップまでの距離」バー。gapBarと見た目の部品（.hbar/.track/.fill）は
+   共有するが、意味が逆（近いほど良い→近いほど危険）なので色は独自に塗る。
+   到達（価格がストップ以下）は本来なら次のループで即座に手仕舞われる想定だが、
+   表示の更新が売買判断の反映より一瞬早いタイミングもあり得るため、
+   その場合の表示も用意しておく。 */
+function stopGapBar(gapPct) {
+  if (gapPct === null || gapPct === undefined) return "—";
+  const danger = gapPct <= 5;    // ストップまで5%以内は警戒色にする
+  const frac = Math.max(0.03, 1 - Math.min(Math.max(gapPct, 0), GAP_REF) / GAP_REF);
+  return `<div class="hbar"><span class="${danger ? 'bad' : ''}">${
+      gapPct <= 0 ? '到達' : `あと ${gapPct.toFixed(1)}%`}</span>
+    <span class="track"><span class="fill${danger ? ' danger' : ''}"
+      style="width:${(frac * 100).toFixed(0)}%"></span></span></div>`;
 }
 
 const GAP_REF = 30;
@@ -780,14 +827,40 @@ function renderRegimeLegend(seen, mode) {
 }
 
 // エラーが無いときはカードごと隠す。常設すると「異常が普通」に見えてしまう。
-function renderErrors(errs) {
+// 直近5件（errs）が空でも、過去14日のどこかで発生していれば（freq）カードは出す
+// ——「今は治まっているが、少し前に荒れていた」も見逃し防止として拾いたいため。
+function renderErrors(errs, freq) {
   const card = document.getElementById("errcard");
   const box = document.getElementById("errors");
-  if (!errs || !errs.length) { card.hidden = true; box.innerHTML = ""; return; }
+  const freqTotal = (freq || []).reduce((a, f) => a + f.count, 0);
+  if ((!errs || !errs.length) && freqTotal === 0) {
+    card.hidden = true; box.innerHTML = ""; document.getElementById("errfreq").innerHTML = "";
+    return;
+  }
   card.hidden = false;
-  box.innerHTML = errs.map(e =>
-    `<div class="errline">${e.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</div>`
-  ).join("");
+  box.innerHTML = (errs && errs.length)
+    ? errs.map(e =>
+        `<div class="errline">${e.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</div>`
+      ).join("")
+    : '<div class="empty">直近のエラーはありません</div>';
+  renderErrorFreq(freq);
+}
+
+/* 週次・月次の集計は大げさなので、直近14日を1日ずつの棒で並べる簡易トレンド。
+   0件の日も細い棒（高さ2px）を残して「その日は発生していない」ことを可視化する。
+   1〜2回のノイズと、頻度そのものが増えている劣化の兆候を見分けやすくするのが目的。 */
+function renderErrorFreq(freq) {
+  const box = document.getElementById("errfreq");
+  if (!freq || !freq.length) { box.innerHTML = ""; return; }
+  const max = Math.max(...freq.map(f => f.count), 1);
+  const bars = freq.map(f => {
+    const h = f.count === 0 ? 2 : Math.max(4, Math.round(f.count / max * 22));
+    const color = f.count === 0 ? "var(--grid)" : "var(--bad)";
+    return `<span title="${f.date}: ${f.count}件" style="display:inline-block;width:6px;
+      height:${h}px;background:${color};border-radius:1px;vertical-align:bottom"></span>`;
+  }).join(" ");
+  box.innerHTML = `<div class="sub" style="margin-top:12px">直近14日のエラー発生件数</div>
+    <div style="display:flex;gap:2px;align-items:flex-end;height:24px;margin-top:4px">${bars}</div>`;
 }
 
 function renderStats(st) {
@@ -812,7 +885,27 @@ function renderStats(st) {
   box.innerHTML = '<div class="stats" style="border-top:none;padding-top:0;margin-top:0">'
     + items.map(([k, v, c]) =>
         `<div class="stat"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join("")
-    + "</div>" + symbolPnl(st.by_symbol);
+    + "</div>" + symbolPnl(st.by_symbol) + holdingDist(st.holding);
+}
+
+/* 保有期間の分布。ホイップソー（往復売買）の傾向は、個々の損益だけを見ていても
+   気づきにくい。broker.py は銘柄単位でポジションを合算管理しており個別ロットを
+   区別しないため、ここでの「保有期間」も同じ単位（最初の買い→ゼロに戻す売り）
+   で揃えている（dashboard.py の _holding_periods 参照）。 */
+function holdingDist(h) {
+  if (!h || !h.count) return "";
+  const max = Math.max(...h.buckets.map(b => b.count), 1);
+  const rows = h.buckets.map(b => `
+    <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+      <span class="sub" style="width:64px;flex:none">${b.label}</span>
+      <span class="track" style="flex:1;height:8px;border-radius:4px;background:var(--grid);overflow:hidden">
+        <span style="display:block;height:100%;width:${(b.count / max * 100).toFixed(0)}%;
+          background:linear-gradient(90deg,var(--series-dim),var(--series))"></span>
+      </span>
+      <span class="sub" style="width:36px;text-align:right">${b.count}件</span>
+    </div>`).join("");
+  return `<div class="sub" style="margin-top:18px">保有期間の分布`
+    + `（決済済み${h.count}件・中央値${h.median_days.toFixed(1)}日）</div>${rows}`;
 }
 
 /* 銘柄別の損益。全体の合計だけでは「どの通貨で勝てているか」が分からない。

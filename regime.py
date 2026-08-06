@@ -62,10 +62,15 @@ ATR_N = 14
 ATR_MULT = 3.0
 
 
-def classify(closes: pd.DataFrame) -> dict:
+def classify(closes: pd.DataFrame, *, high_vol: float = HIGH_VOL) -> dict:
     """
     closes: index=日付 / columns=銘柄 の終値（**今日まで**に切ってあること）。
     判定結果と、その根拠になった数値を返す。
+
+    high_vol はシャドー判定（live_trade.py の _log_shadow_regime）が別の
+    閾値で同じ判定を再現するための差し替え口。実運用・バックテストは
+    どちらも既定値（モジュール定数 HIGH_VOL）のまま呼ぶので、この引数を
+    渡さない限り挙動は今まで通り変わらない。
     """
     btc = closes[ANCHOR].dropna()
     price = float(btc.iloc[-1])
@@ -75,7 +80,7 @@ def classify(closes: pd.DataFrame) -> dict:
 
     rets = btc.pct_change().dropna().iloc[-VOL_WINDOW:]
     vol = float(rets.std() * math.sqrt(365)) if len(rets) > 2 else float("nan")
-    calm = vol == vol and vol < HIGH_VOL
+    calm = vol == vol and vol < high_vol
 
     up, total = 0, 0
     for sym in closes.columns:
