@@ -70,29 +70,40 @@ def _read_csv(path: str) -> list[dict]:
 
 def _equity_curve() -> list[dict]:
     rows = _read_csv(lt.EQUITY_LOG)
-    if len(rows) > MAX_CURVE_POINTS:      # 古いほど粗くてよい
-        step = len(rows) // MAX_CURVE_POINTS + 1
-        thinned = rows[::step]
-        # (len-1) が step で割り切れると最終行がすでに含まれており、
-        # 単純に + rows[-1:] すると同じ時刻・同じ値の点が2つ並んでしまう
-        if thinned[-1] is not rows[-1]:
-            thinned = thinned + rows[-1:]
-        rows = thinned
-    out = []
-    prev_equity = None
+
+    # ピーク比（ドローダウン）は間引き前の全行から計算する。増減(delta)は隣接点の
+    # 差を合算すれば間引きで消えた区間ぶんも正しく復元できるが、ピークはそうはいかない。
+    # 間引き後の代表点だけで最高値を追うと、間引きで消えた区間にあった本当の
+    # ピークを見逃し、ドローダウンを実際より浅く見せてしまう。
+    parsed = []
+    peak = None
     for r in rows:
         try:
             equity = float(r["総資産(円)"])
         except (KeyError, ValueError):
             continue
-        # 前レコードからの増減。間引き後の隣接点同士の差になるので、
-        # 間引きで消えた区間ぶんも合算した「正味の変化」を表す（それで正しい）。
-        # 3（日次集約）を実装する際は、ここに集約単位を切り替える分岐を足す。
-        delta = None if prev_equity is None else equity - prev_equity
-        out.append({"t": r["日時"], "equity": equity,
-                    "regime": r.get("レジーム", ""), "delta": delta})
-        prev_equity = equity
-    return out
+        peak = equity if peak is None else max(peak, equity)
+        dd_pct = (equity / peak - 1) * 100 if peak else 0.0
+        parsed.append({"t": r["日時"], "equity": equity,
+                       "regime": r.get("レジーム", ""), "dd_pct": dd_pct})
+
+    if len(parsed) > MAX_CURVE_POINTS:    # 古いほど粗くてよい
+        step = len(parsed) // MAX_CURVE_POINTS + 1
+        thinned = parsed[::step]
+        # (len-1) が step で割り切れると最終行がすでに含まれており、
+        # 単純に + parsed[-1:] すると同じ時刻・同じ値の点が2つ並んでしまう
+        if thinned[-1] is not parsed[-1]:
+            thinned = thinned + parsed[-1:]
+        parsed = thinned
+
+    # 前レコードからの増減。間引き後の隣接点同士の差になるので、
+    # 間引きで消えた区間ぶんも合算した「正味の変化」を表す（それで正しい）。
+    # 3（日次集約）を実装する際は、ここに集約単位を切り替える分岐を足す。
+    prev_equity = None
+    for p in parsed:
+        p["delta"] = None if prev_equity is None else p["equity"] - prev_equity
+        prev_equity = p["equity"]
+    return parsed
 
 
 def _trades() -> list[dict]:
