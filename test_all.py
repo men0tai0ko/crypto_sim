@@ -284,6 +284,174 @@ def _():
 
 
 # ============================================================
+# ダッシュボード
+# ============================================================
+
+@test("スナップショットにレジーム閾値までの距離が正しく渡る")
+def _():
+    """
+    live_trade.py の _save_snapshot が regime.classify() の生値を
+    そのまま渡していること（表示側で計算し直していないこと）を確認する。
+    """
+    import live_trade as lt
+    tmp = tempfile.mkdtemp()
+    saved = (lt.STATE_DIR, lt.SNAPSHOT_FILE)
+    lt.STATE_DIR = tmp
+    lt.SNAPSHOT_FILE = os.path.join(tmp, "snap.json")
+    try:
+        n = 260
+        rise = [100 + i for i in range(n)]
+        closes = pd.DataFrame({"BTC-JPY": rise, "ETH-JPY": rise})
+        closes.index = pd.date_range("2020-01-01", periods=n, freq="D")
+        panel = {"open": closes.copy(), "high": closes * 1.01,
+                 "low": closes * 0.99, "close": closes}
+        prices = {s: float(closes[s].iloc[-1]) for s in closes.columns}
+        reg = regime_mod.classify(closes)
+
+        trader = lt.LiveTrader.__new__(lt.LiveTrader)   # __init__ は状態を読むので通さない
+        trader.broker = Broker(cash=1_000_000)
+        trader.peaks, trader.stops, trader.targets, trader.cooldown = {}, {}, {}, {}
+        trader.started = "2020-01-01 00:00:00"
+        trader.peak_equity = 1_000_000
+
+        trader._save_snapshot("2020-09-17 00:00:00", reg, prices, 0.0, 1_000_000, panel)
+
+        with open(lt.SNAPSHOT_FILE, encoding="utf-8") as f:
+            snap = json.load(f)
+        assert snap["trend_pct"] == reg["200日線比"] * 100, snap["trend_pct"]
+        assert snap["vol_pct"] == reg["年率ボラ"] * 100, snap["vol_pct"]
+        assert snap["vol_high_pct"] == regime_mod.HIGH_VOL * 100
+        assert snap["breadth_pct"] == reg["上昇銘柄比率"] * 100
+        assert snap["breadth_min_pct"] == regime_mod.BREADTH_MIN * 100
+    finally:
+        lt.STATE_DIR, lt.SNAPSHOT_FILE = saved
+
+
+@test("データ不足でトレンド比がNaNのとき、JSONにはNaNでなくnullを書く")
+def _():
+    """
+    「動くこと」ではなく「静かに間違わないこと」が目的（本ファイル冒頭）。
+    NaNをそのまま json.dump すると allow_nan=True の既定動作により
+    標準に反する NaN リテラルが書かれ、JS 側の JSON.parse が壊れる。
+    """
+    import live_trade as lt
+    tmp = tempfile.mkdtemp()
+    saved = (lt.STATE_DIR, lt.SNAPSHOT_FILE)
+    lt.STATE_DIR = tmp
+    lt.SNAPSHOT_FILE = os.path.join(tmp, "snap.json")
+    try:
+        n = 10   # 200日線に満たない → 200日線比はNaN
+        closes = pd.DataFrame({"BTC-JPY": [100 + i for i in range(n)]})
+        closes.index = pd.date_range("2020-01-01", periods=n, freq="D")
+        panel = {"open": closes.copy(), "high": closes * 1.01,
+                 "low": closes * 0.99, "close": closes}
+        prices = {"BTC-JPY": float(closes["BTC-JPY"].iloc[-1])}
+        reg = regime_mod.classify(closes)
+        assert reg["200日線比"] != reg["200日線比"], "前提が崩れている（NaNのはず）"
+
+        trader = lt.LiveTrader.__new__(lt.LiveTrader)
+        trader.broker = Broker(cash=1_000_000)
+        trader.peaks, trader.stops, trader.targets, trader.cooldown = {}, {}, {}, {}
+        trader.started = "2020-01-01 00:00:00"
+        trader.peak_equity = 1_000_000
+
+        trader._save_snapshot("2020-01-10 00:00:00", reg, prices, 0.0, 1_000_000, panel)
+
+        raw = open(lt.SNAPSHOT_FILE, encoding="utf-8").read()
+        assert "NaN" not in raw, "NaNがそのままJSONに書かれている"
+        assert json.loads(raw)["trend_pct"] is None
+    finally:
+        lt.STATE_DIR, lt.SNAPSHOT_FILE = saved
+
+
+@test("ドローダウンは間引き前の全履歴からピークを追う")
+def _():
+    """
+    dashboard.py の _equity_curve は、間引き後の代表点だけでピークを追うと
+    間引きで消えた区間の本当の最高値を見失い、ドローダウンを実際より
+    浅く見せてしまう。ここではその「一瞬だけ跳ねた最高値」を意図的に
+    間引き対象にして、それでも正しく反映されることを確認する。
+    """
+    import csv as csv_mod
+    import dashboard
+    import live_trade as lt
+    tmp = tempfile.mkdtemp()
+    csv_path = os.path.join(tmp, "eq.csv")
+    saved_log = lt.EQUITY_LOG
+    saved_max = dashboard.MAX_CURVE_POINTS
+    lt.EQUITY_LOG = csv_path
+    dashboard.MAX_CURVE_POINTS = 3   # 少数の記録だけ残すよう強制的に間引かせる
+    try:
+        rows = [
+            ("2020-01-01 00:00:00", 1_000_000),
+            ("2020-01-01 00:05:00", 1_000_000),
+            ("2020-01-01 00:10:00", 1_500_000),   # 一瞬の最高値。間引きで消える想定
+            ("2020-01-01 00:15:00", 1_000_000),
+            ("2020-01-01 00:20:00", 1_000_000),
+            ("2020-01-01 00:25:00", 900_000),
+        ]
+        with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv_mod.writer(f)
+            w.writerow(["日時", "レジーム", "戦略", "現金(円)", "評価額(円)",
+                        "総資産(円)", "損益(円)", "損益率(%)", "建玉率(%)"])
+            for t, eq in rows:
+                w.writerow([t, "弱気", "テスト", eq, 0, eq, eq - 1_000_000, 0, 0])
+
+        curve = dashboard._equity_curve()
+        last = curve[-1]
+        assert last["equity"] == 900_000, last
+        expect_dd = (900_000 / 1_500_000 - 1) * 100
+        assert abs(last["dd_pct"] - expect_dd) < 1e-6, \
+            f"間引きで一瞬の最高値を見失っている: {last['dd_pct']} (期待 {expect_dd:.2f})"
+    finally:
+        lt.EQUITY_LOG = saved_log
+        dashboard.MAX_CURVE_POINTS = saved_max
+
+
+@test("CSVダウンロードのエンドポイントが正しいファイルと見出しを返し、対象外は404になる")
+def _():
+    import http.client
+    import threading
+
+    import dashboard
+    import live_trade as lt
+    tmp = tempfile.mkdtemp()
+    eq_path = os.path.join(tmp, "eq.csv")
+    saved_log = lt.EQUITY_LOG
+    lt.EQUITY_LOG = eq_path
+    with open(eq_path, "w", encoding="utf-8-sig") as f:
+        f.write("日時,総資産(円)\n2020-01-01 00:00:00,1000000\n")
+
+    server = dashboard.Server(("127.0.0.1", 0), dashboard.Handler)
+    port = server.server_address[1]
+    th = threading.Thread(target=server.serve_forever, daemon=True)
+    th.start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/download/live_equity.csv")
+        resp = conn.getresponse()
+        body = resp.read()
+        conn.close()
+        assert resp.status == 200, resp.status
+        assert "filename*=UTF-8''" in resp.getheader("Content-Disposition", ""), \
+            "日本語ファイル名の指定（RFC 6266）が無い"
+        assert b"1000000" in body
+
+        # ホワイトリスト外のパスは404（DOWNLOADSに列挙したファイル以外は配信しない）
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/download/regime.py")
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        assert resp.status == 404, resp.status
+    finally:
+        server.shutdown()
+        server.server_close()
+        th.join(timeout=5)
+        lt.EQUITY_LOG = saved_log
+
+
+# ============================================================
 # 二重起動の防止
 # ============================================================
 
