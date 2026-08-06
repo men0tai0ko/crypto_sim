@@ -174,30 +174,46 @@ class LiveTrader:
         self._load_state()
 
     # ---- 状態の保存・復元 ----
+    def _load_state_from(self, path: str) -> bool:
+        """
+        指定ファイルから状態を復元できたら True。無い、または壊れていれば False。
+        ファイルが存在しないだけ（初回起動・バックアップ未生成）では警告を出さない。
+        """
+        if not os.path.exists(path):
+            return False
+        try:
+            with open(path, encoding="utf-8") as f:
+                s = json.load(f)
+            self.broker = Broker.from_dict(s["broker"])
+            self.peaks = {k: float(v) for k, v in s.get("peaks", {}).items()}
+            self.targets = {k: float(v) for k, v in s.get("targets", {}).items()}
+            self.stopped = set(s.get("stopped", []))
+            self.cooldown = dict(s.get("cooldown", {}))   # 銘柄 -> 再エントリー解禁日
+            self.last_plan_date = s.get("last_plan_date")
+            self.started = s.get("started")
+            self.peak_equity = float(s.get("peak_equity", CAPITAL))
+            self.stops = {}
+            return True
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # 壊れたファイルのまま次の判定に進まないと、CIでは次回も
+            # 同じ壊れたファイルを .prev から復元して同じ場所で落ち続ける
+            # （このメソッドは main() のリトライ機構の外側、__init__ から
+            #  直接呼ばれるため、ここで拾わないと無言でプロセスごと落ちる）。
+            print(f"[警告] 状態ファイルの読み込みに失敗しました: {exc}")
+            print(f"  {path} が壊れている可能性があります。")
+            return False
+
     def _load_state(self) -> None:
-        if os.path.exists(STATE_FILE):
-            try:
-                with open(STATE_FILE, encoding="utf-8") as f:
-                    s = json.load(f)
-                self.broker = Broker.from_dict(s["broker"])
-                self.peaks = {k: float(v) for k, v in s.get("peaks", {}).items()}
-                self.targets = {k: float(v) for k, v in s.get("targets", {}).items()}
-                self.stopped = set(s.get("stopped", []))
-                self.cooldown = dict(s.get("cooldown", {}))   # 銘柄 -> 再エントリー解禁日
-                self.last_plan_date = s.get("last_plan_date")
-                self.started = s.get("started")
-                self.peak_equity = float(s.get("peak_equity", CAPITAL))
-                self.stops = {}
-                return
-            except (OSError, ValueError, KeyError, TypeError) as exc:
-                # 壊れたファイルのまま新規状態に切り替えないと、CIでは次回も
-                # 同じ壊れたファイルを .prev から復元して同じ場所で落ち続ける
-                # （このメソッドは main() のリトライ機構の外側、__init__ から
-                #  直接呼ばれるため、ここで拾わないと無言でプロセスごと落ちる）。
-                # 架空資金のシミュレーションなので、状態を失っても実害は
-                # 「元手からやり直し」で済む。壊れたまま詰むよりましと判断する。
-                print(f"[警告] 状態ファイルの読み込みに失敗しました: {exc}")
-                print(f"  {STATE_FILE} が壊れている可能性があります。元手から再開します。")
+        if self._load_state_from(STATE_FILE):
+            return
+        # 直前の書き込みが壊れていても、1世代前（.bak）が残っていればそこから復旧を試みる。
+        # .bak も無い／壊れていれば静かに False が返るだけ（二重に警告を出さない）。
+        if self._load_state_from(STATE_FILE + ".bak"):
+            print(f"  1世代前のバックアップ（{STATE_FILE}.bak）から復元しました。")
+            return
+        # 架空資金のシミュレーションなので、状態を失っても実害は
+        # 「元手からやり直し」で済む。壊れたまま詰むよりましと判断する。
+        print("  元手から再開します。")
         self.broker = Broker(cash=float(CAPITAL))
         self.peaks, self.targets, self.stopped = {}, {}, set()
         self.cooldown = {}
@@ -221,6 +237,15 @@ class LiveTrader:
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(s, f, ensure_ascii=False, indent=2)
+        # 直前の世代を1つだけ.bakとして残す。今回の書き込み内容が何らかの理由で
+        # 壊れていても（想定外の値・将来のバグ等）、1つ前の状態に戻れる余地を残す。
+        # os.replaceで運んでいる限り書き込み中の異常終了では壊れないが、
+        # それとは別の「書けた内容そのものが壊れている」場合への備え。
+        if os.path.exists(STATE_FILE):
+            try:
+                os.replace(STATE_FILE, STATE_FILE + ".bak")
+            except OSError:
+                pass
         os.replace(tmp, STATE_FILE)   # 書き込み中の異常終了で状態を壊さない
 
     # ---- データ ----
