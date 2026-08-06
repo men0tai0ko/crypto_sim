@@ -1,0 +1,37 @@
+name: パラメータ感度の回帰チェック
+
+# sensitivity.py の「崖検出」を定期的に自動実行し、パラメータの平坦域が
+# 崩れていないかを機械的にふるいにかける。過剰最適化を防ぐルール（README参照）を
+# 人力チェックだけに頼らず補強するためのもの。
+#
+# 対象は TREND_MA と ATR_MULT の2つだけ（sensitivity.py 参照）。
+# HIGH_VOL と MAX_WEIGHT は README で説明済みの意図した段差を持つため、
+# 自動検出の対象から外している（そこを含めると常に赤くなり、
+# チェック自体が信用されなくなる）。
+#
+# ここで何か引っかかっても、それだけを根拠に実運用のパラメータを
+# 動かすことはしない——「両期間の結果を見てから判断する」というルールに沿い、
+# あくまで人が sensitivity.py の詳細な出力を見直すきっかけとして使う。
+# 状態は何も書き換えない（読み取り専用のチェック）。
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"     # 毎週月曜 03:00 UTC（12:00 JST）
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: パラメータ感度の崖検出
+        run: python sensitivity.py --check

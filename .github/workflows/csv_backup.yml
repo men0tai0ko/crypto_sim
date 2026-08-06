@@ -1,0 +1,55 @@
+name: CSVの定期バックアップ
+
+# results/live_equity.csv・live_trades.csv は state/ と同じく .gitignore 対象で、
+# 通常のコミット履歴には残らない（README「運用中の資産推移を残したい場合...
+# Git ではなく別途バックアップすること」参照）。ダッシュボードの手動ダウンロード
+# ボタン（CSVダウンロード機能）に加えて、週次の自動アップロードでバックアップ漏れを防ぐ。
+#
+# data ブランチは毎回1コミットに強制置換されるため、そこに置くだけでは
+# 「今の最新」しか残らない。GitHub Releases に置くことで、過去のある時点の
+# 状態にもさかのぼれるようにする。ただしリリース一覧が無限に増え続けないよう、
+# 固定タグ（csv-backup）を毎週上書きするローリング方式にしている
+# （dataブランチの「毎回force pushで置き換える」設計と同じ考え方）。
+#
+# 書き込むのは GitHub Releases だけで、data / main のどちらのブランチにも触らない。
+
+on:
+  schedule:
+    - cron: "30 3 * * 1"    # 毎週月曜 03:30 UTC（12:30 JST。sensitivity.yml と時間をずらす）
+  workflow_dispatch:
+
+permissions:
+  contents: write   # リリースの作成・更新に必要
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: dataブランチを取得（無ければ後続をスキップ）
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          ref: data
+
+      - name: CSVの存在を確認
+        id: check
+        run: |
+          if [ -f results/live_equity.csv ] || [ -f results/live_trades.csv ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "まだCSVがありません（運用開始直後、または初回実行前）。バックアップをスキップします。"
+          fi
+
+      - name: GitHub Releasesへアップロード（csv-backupタグを上書き）
+        if: steps.check.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete csv-backup --yes --cleanup-tag --repo "${{ github.repository }}" || true
+          gh release create csv-backup \
+            --title "CSVバックアップ（$(date -u '+%Y-%m-%d %H:%MZ')）" \
+            --notes "results/live_equity.csv・live_trades.csv の週次自動バックアップ。表示専用で売買には一切関与しません。実際の売買・送金は行っていません（架空資金のシミュレーションです）。" \
+            --repo "${{ github.repository }}" \
+            results/live_equity.csv results/live_trades.csv

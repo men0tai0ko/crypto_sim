@@ -55,13 +55,46 @@ GitHubのcronは高負荷時に大幅に遅れたり実行が飛ぶことがあ�
 
 なお公開リポジトリでは、60日間なにも更新が無いとスケジュールが自動停止する。
 
+### cronの発火漏れを外部から監視する（任意）
+
+上記の通りGitHubのcronは実行が飛ぶことがある。より確実にしたい場合、外部の
+無料cronサービス（cron-job.org 等）から `workflow_dispatch` API を定期的に
+叩かせることができる。`trade.yml` は既に `workflow_dispatch:` を有効にして
+あるので、コード側の変更は不要。**アカウント作成やトークン発行は本人が
+行う必要があるため、ここから先は手動セットアップになる：**
+
+1. GitHub の Settings → Developer settings → Fine-grained personal access
+   tokens で、**このリポジトリだけ**に絞った、権限は **Actions: Read and write**
+   だけのトークンを発行する
+2. 好きな外部cronサービスに登録し、30分〜1時間おきに次のリクエストを
+   送るよう設定する:
+   ```
+   POST https://api.github.com/repos/<ユーザー名>/<リポジトリ名>/actions/workflows/trade.yml/dispatches
+   Authorization: Bearer <発行したトークン>
+   Accept: application/vnd.github+json
+   Body: {"ref":"main"}
+   ```
+3. GitHub側のスケジュールと時間が重なっても構わない。`concurrency: group:
+   live-trade` で直列化されるため、同時に2つ動いて状態が壊れることはなく、
+   重なった分は無駄になるだけ
+
+### 補助ワークフロー
+
+以下は `trade.yml` とは別に、週次で走る読み取り専用の補助ジョブ。
+どちらも `state/` や `data` ブランチには一切書き込まない。
+
+| ワークフロー | 頻度 | 内容 |
+|---|---|---|
+| `sensitivity.yml` | 毎週月曜 | `python sensitivity.py --check` でパラメータの平坦域が崩れていないか確認。崖を検出したらジョブが失敗する（Actionsタブで気づける） |
+| `csv_backup.yml` | 毎週月曜 | `results/live_equity.csv`・`live_trades.csv` を GitHub Releases（固定タグ `csv-backup` を毎週上書き）へバックアップ |
+
 ## テスト
 
 ```bash
 python test_all.py
 ```
 
-壊れたら困る不変条件だけを検査する（26件）。外部ライブラリ不要、ネットワークにも
+壊れたら困る不変条件だけを検査する（29件）。外部ライブラリ不要、ネットワークにも
 本番の `state/` にも触らない（ダッシュボードのCSVダウンロード検証だけは
 127.0.0.1のループバックでローカルサーバを一時的に立てる）。主な検査項目:
 
@@ -75,6 +108,8 @@ python test_all.py
   データ不足時にNaNをそのままJSONへ書き出さないこと
 - ダッシュボードのCSVダウンロードが正しいファイル・見出しを返し、
   対象外のパスは404になること
+- `build_state()`（`/api/state`）が返す形（キー・型）が壊れていないこと
+- 状態ファイルが壊れていても1世代前の `.bak` から復元できること
 
 ## 使い方
 
@@ -86,6 +121,8 @@ python backtest.py --kill-dd 0.25           # キルスイッチ有効
 python backtest.py --start 2021-01-01 --end 2023-12-31
 python plot.py                              # results/ にPNGを3枚出力
 python plot.py --dark                       # ダーク配色
+python sensitivity.py                       # パラメータ感度の一覧表示
+python sensitivity.py --check               # 崖検出だけ行う（週次CIと同じ、終了コードで判定）
 ```
 
 ## 図
@@ -331,6 +368,12 @@ python dashboard.py --port 9000
 
 自分で決めた「1つずらして崩れるなら偶然」というルールに従って確認した結果、
 どのパラメータも滑らかに変化し、特定の値でだけ跳ねる箇所は無かった。
+
+`sensitivity.yml` が毎週この確認を自動で行う（`--check` オプション）。
+ただし自動判定の対象は**大局トレンドの移動平均とATRストップ幅の2つだけ**。
+ボラ閾値と1銘柄上限は、下記の通り調べた範囲内に意図した段差を持つと
+既に分かっているため、自動検出にかけると常に引っかかってチェック自体が
+信用されなくなる。この2つは今まで通り人が目視で確認する。
 
 - 大局トレンドの移動平均: 100〜300日で CAGR 68〜76%（in-sample）、崖なし
 - ATRストップ幅: 2.0〜4.0倍で Calmar 1.59〜1.87、崖なし

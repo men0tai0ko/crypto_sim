@@ -451,6 +451,58 @@ def _():
         lt.EQUITY_LOG = saved_log
 
 
+@test("build_state()が返すAPIスキーマの形が壊れていない")
+def _():
+    """
+    /api/state（＝dashboard.build_state()）はフロント側（dashboard.html）が
+    暗黙に前提としているキー・型の契約になっている。ここが崩れると
+    フロント側は「表示エラー」としか分からず原因を追いにくい。
+    """
+    import csv as csv_mod
+
+    import dashboard
+    import live_trade as lt
+    tmp = tempfile.mkdtemp()
+    saved = (lt.STATE_DIR, lt.SNAPSHOT_FILE, lt.LOCK_FILE,
+             lt.EQUITY_LOG, lt.TRADES_LOG, lt.ERROR_LOG)
+    lt.STATE_DIR = tmp
+    lt.SNAPSHOT_FILE = os.path.join(tmp, "snap.json")
+    lt.LOCK_FILE = os.path.join(tmp, "l.lock")
+    lt.EQUITY_LOG = os.path.join(tmp, "eq.csv")
+    lt.TRADES_LOG = os.path.join(tmp, "tr.csv")
+    lt.ERROR_LOG = os.path.join(tmp, "err.log")
+    try:
+        # 何も無い最初期状態（トレーダーの初回ループ前）でも壊れないこと
+        state = dashboard.build_state()
+        for key in ("running", "pid", "interval", "heartbeat", "stale_reason",
+                    "snapshot", "curve", "trades", "stats", "errors",
+                    "error_freq", "server_time"):
+            assert key in state, f"キーが無い: {key}"
+        assert isinstance(state["running"], bool)
+        assert state["snapshot"] is None
+        assert state["curve"] == []
+        assert state["trades"] == []
+        assert state["stats"] == {"count": 0, "by_symbol": [],
+                                   "holding": {"count": 0, "buckets": []}}
+        assert state["errors"] == []
+        assert len(state["error_freq"]) == 14, "既定は直近14日ぶん"
+        assert isinstance(state["server_time"], str)
+
+        # データがある状態でも壊れず、JSONへシリアライズできること
+        with open(lt.EQUITY_LOG, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv_mod.writer(f)
+            w.writerow(["日時", "レジーム", "戦略", "現金(円)", "評価額(円)",
+                        "総資産(円)", "損益(円)", "損益率(%)", "建玉率(%)"])
+            w.writerow(["2020-01-01 00:00:00", "弱気", "テスト", "1000000", "0",
+                        "1000000", "0", "0.00", "0.0"])
+        state2 = dashboard.build_state()
+        assert len(state2["curve"]) == 1
+        json.dumps(state2, ensure_ascii=False)   # NaN等を含んでいないこと自体の検証
+    finally:
+        (lt.STATE_DIR, lt.SNAPSHOT_FILE, lt.LOCK_FILE,
+         lt.EQUITY_LOG, lt.TRADES_LOG, lt.ERROR_LOG) = saved
+
+
 # ============================================================
 # 二重起動の防止
 # ============================================================
@@ -525,6 +577,52 @@ def _():
             json.dump({"peaks": {}}, f)   # "broker" キーが無い
         trader = lt.LiveTrader()
         assert trader.broker.cash == lt.CAPITAL
+    finally:
+        lt.STATE_DIR, lt.STATE_FILE = saved
+
+
+@test("最新の状態ファイルが壊れていても1世代前のバックアップから復元する")
+def _():
+    import live_trade as lt
+    tmp = tempfile.mkdtemp()
+    saved = (lt.STATE_DIR, lt.STATE_FILE)
+    lt.STATE_DIR = tmp
+    lt.STATE_FILE = os.path.join(tmp, "s.json")
+    try:
+        good = {"broker": {"cash": 555_000, "positions": {}, "trades": []},
+                "peaks": {}, "targets": {}, "stopped": [], "cooldown": {},
+                "last_plan_date": "2020-01-01", "started": "2020-01-01 00:00:00",
+                "peak_equity": 1_000_000}
+        with open(lt.STATE_FILE + ".bak", "w", encoding="utf-8") as f:
+            json.dump(good, f)
+        with open(lt.STATE_FILE, "w", encoding="utf-8") as f:
+            f.write("{ 壊れたJSON ")
+        trader = lt.LiveTrader()
+        assert trader.broker.cash == 555_000, \
+            f".bakから復元されていない: {trader.broker.cash}"
+    finally:
+        lt.STATE_DIR, lt.STATE_FILE = saved
+
+
+@test("正常な状態ファイルを保存すると直前の内容が.bakとして残る")
+def _():
+    import live_trade as lt
+    tmp = tempfile.mkdtemp()
+    saved = (lt.STATE_DIR, lt.STATE_FILE)
+    lt.STATE_DIR = tmp
+    lt.STATE_FILE = os.path.join(tmp, "s.json")
+    try:
+        trader = lt.LiveTrader()          # 元手からの新規状態（.jsonはまだ無い）
+        trader._save_state()
+        assert not os.path.exists(lt.STATE_FILE + ".bak"), \
+            "初回保存なのに.bakができている（1世代前が存在しないはず）"
+        trader.broker.cash = 777_000
+        trader._save_state()
+        assert os.path.exists(lt.STATE_FILE + ".bak"), "2回目の保存で.bakが作られていない"
+        with open(lt.STATE_FILE + ".bak", encoding="utf-8") as f:
+            backed_up = json.load(f)
+        assert backed_up["broker"]["cash"] == lt.CAPITAL, \
+            ".bakの中身が最新（2回目）のものになっている（1つ前のはずが上書きされた）"
     finally:
         lt.STATE_DIR, lt.STATE_FILE = saved
 
