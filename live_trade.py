@@ -53,7 +53,16 @@ SNAPSHOT_FILE = os.path.join(STATE_DIR, "snapshot.json")
 TRADES_LOG = os.path.join(RESULTS_DIR, "live_trades.csv")
 EQUITY_LOG = os.path.join(RESULTS_DIR, "live_equity.csv")
 ERROR_LOG = os.path.join(RESULTS_DIR, "live_errors.log")
+SHADOW_LOG = os.path.join(RESULTS_DIR, "shadow_regime.csv")
 MAX_ERRORS = 30            # 連続エラーがこの回数を超えたら諦めて終了
+
+# シャドー判定（記録専用・実売買には一切使わない）のボラ閾値。
+# sensitivity.py で「0.75以上は安定、0.75未満で急激に悪化（0.6でCalmar 0.78）」
+# と確認された、安定域の下限側の値。実運用の既定値(regime.HIGH_VOL=0.90)との
+# 差分を毎日記録しておき、将来パラメータを見直す材料にする
+# （「両期間の結果を見てから判断する」という過剰最適化を防ぐルールに沿うため、
+#  ここで見つかった差分だけを根拠に実運用の値を今すぐ動かすことはしない）。
+SHADOW_HIGH_VOL = 0.75
 
 CAPITAL = 1_000_000        # 元手（円）
 # 以下はすべて regime.py に一元化。実運用とバックテストが同じ値を同じ場所から読む
@@ -414,6 +423,7 @@ class LiveTrader:
             "positions": positions,
             "universe": self._universe(reg, prices, panel),
             "data_gaps": data_mod.find_gaps(panel, days=30),
+            "data_gap_retried_at": data_mod.last_gap_retry(),
             "targets": self.targets,
             "prices": prices,
         }
@@ -438,6 +448,28 @@ class LiveTrader:
                             f"{t.price:.2f}", f"{t.amount_jpy:.0f}",
                             f"{t.realized_jpy:.0f}" if t.side == "売" else "", t.reason])
         return new
+
+    def _log_shadow_regime(self, panel: dict, reg: dict) -> None:
+        """
+        実売買には一切影響しない記録専用の処理。別のボラ閾値（SHADOW_HIGH_VOL）で
+        同じ判定をもう一度行い、実際の判定と一致するかどうかだけをログに残す。
+        ここで計算した値は self.targets / self.broker のどちらにも渡さない。
+        1日1回、建玉方針を練り直すタイミング（_plan と同じ頻度）でのみ呼ぶ。
+        """
+        try:
+            shadow = regime_mod.classify(panel["close"], high_vol=SHADOW_HIGH_VOL)
+        except Exception as exc:
+            # 記録用のおまけなので、失敗しても本編（実際の売買判断）には影響させない
+            log_error(exc, 0)
+            return
+        is_new_file = not os.path.exists(SHADOW_LOG)
+        with open(SHADOW_LOG, "a", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            if is_new_file:
+                w.writerow(["日時", "実運用レジーム", f"シャドー(ボラ閾値{SHADOW_HIGH_VOL:.2f})", "一致"])
+            w.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        reg["レジーム"], shadow["レジーム"],
+                        "○" if reg["レジーム"] == shadow["レジーム"] else "×"])
 
     def _log_equity(self, ts: str, reg: dict, cash: float, invested: float,
                     equity: float) -> None:
@@ -476,6 +508,7 @@ class LiveTrader:
         if replanned:
             self.targets = self._plan(panel, reg, equity)
             self.last_plan_date = today
+            self._log_shadow_regime(panel, reg)
 
         eff = self._guard(panel, prices)
 
