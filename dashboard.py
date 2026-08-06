@@ -25,6 +25,7 @@ import os
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import quote
 
 import live_trade as lt
 
@@ -32,6 +33,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PAGE_FILE = os.path.join(BASE_DIR, "dashboard.html")
 MAX_CURVE_POINTS = 1500     # これを超えたら間引いて返す
 MAX_TRADES = 40
+
+# CSVダウンロードの対象をホワイトリストで固定する（任意のファイルを晒さないため）。
+# 静的配信（publish_static.py）側は results/ をそのまま同梱して同じファイルへの
+# 相対リンクで代替しており、こちらのエンドポイントは使わない。
+DOWNLOADS = {
+    "/download/live_equity.csv": (lambda: lt.EQUITY_LOG, "資産推移.csv"),
+    "/download/live_trades.csv": (lambda: lt.TRADES_LOG, "売買履歴.csv"),
+}
 
 
 def _read_json(path: str):
@@ -211,11 +220,13 @@ class Server(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _send(self, body: bytes, content_type: str) -> None:
+    def _send(self, body: bytes, content_type: str, extra_headers: dict | None = None) -> None:
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra_headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -230,6 +241,17 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/state":
             body = json.dumps(build_state(), ensure_ascii=False).encode("utf-8")
             self._send(body, "application/json; charset=utf-8")
+        elif path in DOWNLOADS:
+            src_getter, name = DOWNLOADS[path]
+            try:
+                with open(src_getter(), "rb") as f:
+                    body = f.read()
+            except OSError:
+                self.send_error(404, "まだ記録がありません")
+                return
+            # ファイル名に日本語を含むので RFC 6266 の filename* で指定する
+            self._send(body, "text/csv; charset=utf-8",
+                       {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
         else:
             self.send_error(404)
 

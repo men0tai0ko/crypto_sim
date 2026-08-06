@@ -403,6 +403,14 @@ class LiveTrader:
             "strategy": reg["戦略"],
             "cap_pct": reg["上限"] * 100,
             "reason": reg["理由"],
+            # レジーム判定の各条件が、切り替わる閾値までどれだけ離れているか。
+            # 監視ユニバースの「点灯まで」バーと同じ発想で、相場付きが変わる予兆に
+            # 気づけるようにする。すべて regime.py の値をそのまま使う（ここで計算し直さない）。
+            "trend_pct": reg["200日線比"] * 100 if reg["200日線比"] == reg["200日線比"] else None,
+            "vol_pct": reg["年率ボラ"] * 100 if reg["年率ボラ"] == reg["年率ボラ"] else None,
+            "vol_high_pct": regime_mod.HIGH_VOL * 100,
+            "breadth_pct": reg["上昇銘柄比率"] * 100,
+            "breadth_min_pct": regime_mod.BREADTH_MIN * 100,
             "positions": positions,
             "universe": self._universe(reg, prices, panel),
             "data_gaps": data_mod.find_gaps(panel, days=30),

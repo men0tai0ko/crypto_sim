@@ -23,6 +23,7 @@ TREND_MA = 200          # 大局トレンドの判定に使う移動平均（日
 BREADTH_MA = 50         # 各銘柄の上昇判定に使う移動平均（日）
 VOL_WINDOW = 30         # ボラティリティの計測窓（日）
 HIGH_VOL = 0.90         # 年率ボラがこれを超えたら「荒れている」
+BREADTH_MIN = 0.50      # 上昇銘柄比率がこれ以上で「相場全体が伸びている」
 ANCHOR = "BTC-JPY"      # 大局判定の基準銘柄
 
 # レジーム名 -> (戦略キー, エクスポージャー上限)
@@ -88,7 +89,7 @@ def classify(closes: pd.DataFrame) -> dict:
 
     if not above:
         name = "弱気"
-    elif calm and breadth >= 0.5:
+    elif calm and breadth >= BREADTH_MIN:
         name = "強気"
     else:
         name = "中立"
