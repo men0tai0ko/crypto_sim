@@ -218,6 +218,8 @@ python dashboard.py --port 9000
 | `live_trade.py` | リアルタイム仮想運用の常駐ループ |
 | `dashboard.py` / `dashboard.html` | ブラウザ表示用のローカルサーバと画面（表示専用） |
 
+ダッシュボードの未実装の改善案と優先順位は [IDEAS.md](IDEAS.md) を参照。
+
 ## 前提条件
 
 - **ユニバース**: BTC-JPY / ETH-JPY / XRP-JPY / SOL-JPY（JPY建て直接なので為替換算不要）
