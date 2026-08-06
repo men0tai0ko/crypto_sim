@@ -194,6 +194,8 @@
              letter-spacing: -.01em; }
   .good { color: var(--good); }
   .bad { color: var(--bad); }
+  a { color: var(--series); text-decoration: none; }
+  a:hover, a:focus-visible { text-decoration: underline; }
 
   /* 相場判断のカードは、いまのレジームの色を左端に帯として出す */
   #regimecard::before {
@@ -395,6 +397,7 @@
       <span class="sub" id="cap"></span>
     </div>
     <div class="sub" id="reason" style="margin-top:8px"></div>
+    <div id="regimebars" style="margin-top:10px"></div>
   </div>
 
   <div class="card">
@@ -425,6 +428,9 @@
       <div class="tip" id="tip"></div>
     </div>
     <div class="legend" id="rlegend"></div>
+    <div class="sub" style="margin-top:10px;text-align:right">
+      <a id="equitydl" href="#" download hidden>資産推移をCSVでダウンロード</a>
+    </div>
   </div>
 
   <div class="card">
@@ -446,6 +452,9 @@
   <div class="card">
     <h2>売買履歴（新しい順・最新40件）</h2>
     <div class="scroll capped"><div id="trades"></div></div>
+    <div class="sub" style="margin-top:10px;text-align:right">
+      <a id="tradesdl" href="#" download hidden>売買履歴をCSVでダウンロード</a>
+    </div>
   </div>
 
   <div class="card" id="errcard" hidden>
@@ -509,6 +518,7 @@ function render(s) {
       "--regime-color", REGIME_COLOR[k.regime] || "var(--axis)");
     setText("cap", `エクスポージャー上限 ${k.cap_pct.toFixed(0)}%`);
     setText("reason", "根拠: " + k.reason);
+    renderRegimeBars(k);
     renderComposition(k);
     renderPositions(k);
     renderUniverse(k);
@@ -518,6 +528,7 @@ function render(s) {
     ["equity", "pnl", "cash", "invested", "expo", "dd", "started",
      "regime", "strategy"].forEach(id => setText(id, "—", ""));
     setText("cap", ""); setText("reason", "");
+    document.getElementById("regimebars").innerHTML = "";
     document.getElementById("compo").innerHTML = "";
     document.getElementById("periodsummary").innerHTML = "";
     document.getElementById("positions").innerHTML =
@@ -532,6 +543,7 @@ function render(s) {
   renderErrors(s.errors);
   drawChart(s.curve, k ? k.capital : 1000000);
   if (k) renderPeriodSummary(s.curve);
+  updateDownloadLinks(s);
   setTabIdentity(s);
   // 静的配信では常駐サーバが無く、実際には「ファイルが作られた時刻」なので言い換える
   document.getElementById("foot").textContent = s.mode === "scheduled"
@@ -724,6 +736,34 @@ function gapBar(gap) {
     <span class="track"><span class="fill" style="width:${(frac * 100).toFixed(0)}%"></span></span></div>`;
 }
 
+/* いまの相場判断の内訳。監視ユニバースの「点灯まで」バー（gapBar）と同じ部品を使い、
+   レジーム判定を構成する3条件が、切り替わる閾値までどれだけ離れているかを示す。
+   数値は live_trade.py が regime.py の生値をそのまま snapshot に渡したもの
+   （ここで計算し直さない＝実運用側と表示側で判定基準がズレる心配がない）。
+   弱気の間はトレンド条件だけで決まり、ボラ・上昇銘柄比率は強気/中立の分岐にしか
+   効かない（regime.py の分岐と同じ）。それでも3つとも表示するのは、
+   弱気から抜けた直後にどちらへ転ぶか（強気か中立か）の見通しにもなるため。 */
+function renderRegimeBars(k) {
+  const box = document.getElementById("regimebars");
+  if (k.trend_pct === null || k.trend_pct === undefined) { box.innerHTML = ""; return; }
+  const rows = [
+    { label: "大局トレンド（200日線比）",
+      detail: signed(k.trend_pct, 1),
+      gap: k.trend_pct >= 0 ? 0 : -k.trend_pct },
+    { label: `ボラティリティ（閾値 年率${k.vol_high_pct.toFixed(0)}%未満）`,
+      detail: k.vol_pct === null ? "—" : `年率${k.vol_pct.toFixed(0)}%`,
+      gap: k.vol_pct === null ? 0 : Math.max(0, k.vol_pct - k.vol_high_pct) },
+    { label: `上昇銘柄比率（閾値 ${k.breadth_min_pct.toFixed(0)}%以上）`,
+      detail: `${k.breadth_pct.toFixed(0)}%`,
+      gap: Math.max(0, k.breadth_min_pct - k.breadth_pct) },
+  ];
+  box.innerHTML = rows.map(r => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:7px">
+      <span class="sub">${r.label} <b style="color:var(--ink)">${r.detail}</b></span>
+      ${gapBar(r.gap)}
+    </div>`).join("");
+}
+
 // 帯は色だけで意味を持たせない。出現したレジームぶんだけ凡例を出す。
 function renderRegimeLegend(seen, mode) {
   const el = document.getElementById("rlegend");
@@ -835,6 +875,18 @@ function renderPeriodSummary(curve) {
   });
   box.innerHTML = '<div class="stats" style="border-top:none;padding-top:0;margin-top:0">'
     + items.join("") + "</div>";
+}
+
+/* ダウンロードリンクは記録が無いうちは404になるだけなので隠しておく。
+   売買履歴は最初の1件が決済されるまでファイル自体が存在しない
+   （live_trade.py の _log_trades 参照）。 */
+function updateDownloadLinks(s) {
+  const eq = document.getElementById("equitydl");
+  eq.hidden = !s.curve || s.curve.length === 0;
+  eq.href = EQUITY_CSV_URL;
+  const tr = document.getElementById("tradesdl");
+  tr.hidden = !s.trades || s.trades.length === 0;
+  tr.href = TRADES_CSV_URL;
 }
 
 function renderTrades(trades) {
@@ -1326,6 +1378,11 @@ function signature(s) {
 /* 取得先。ローカルサーバでは /api/state、GitHub Pages などの静的配信では
    publish_static.py が書き出した state.json を読む（index.html 側で差し替える） */
 const STATE_URL = window.STATE_URL || "/api/state";
+/* CSVダウンロード先。ローカルサーバは専用エンドポイントを持つ。静的配信では
+   publish_static.py が results/ をそのまま同梱しているので、そこへの相対パスを直接指す
+   （state.json と同じ差し替え方式。publish_static.py 参照）。 */
+const EQUITY_CSV_URL = window.EQUITY_CSV_URL || "/download/live_equity.csv";
+const TRADES_CSV_URL = window.TRADES_CSV_URL || "/download/live_trades.csv";
 
 async function refresh() {
   let data;

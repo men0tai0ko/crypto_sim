@@ -21,8 +21,11 @@ import dashboard
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT = os.path.join(BASE_DIR, "publish")
 
-# 静的配信では /api/state が無いので、隣に置く state.json を読ませる
-INJECT = '<script>window.STATE_URL = "state.json";</script>\n'
+# 静的配信では /api/state や /download/... が無いので、隣に同梱した
+# state.json / results/ 配下のCSVを直接読ませる
+INJECT = ('<script>window.STATE_URL = "state.json";\n'
+          'window.EQUITY_CSV_URL = "results/live_equity.csv";\n'
+          'window.TRADES_CSV_URL = "results/live_trades.csv";</script>\n')
 
 
 def build(out_dir: str) -> None:
