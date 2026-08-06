@@ -412,11 +412,12 @@
         <button type="button" data-h="720">30日</button>
         <button type="button" data-h="0" class="on">全期間</button>
       </div>
-      <!-- 「増減」は記録間隔ごとの差分バー。将来「日次」を第3の選択肢として
+      <!-- 「増減」は記録間隔ごとの差分バー。将来「日次」を第4の選択肢として
            ここに追加する（サーバ側の集約単位を切り替える形で拡張する想定）。 -->
       <div class="filters" id="chartmode">
         <button type="button" data-mode="line" class="on">総資産</button>
         <button type="button" data-mode="bar">増減</button>
+        <button type="button" data-mode="dd">ドローダウン</button>
       </div>
     </div>
     <div class="chartbox">
@@ -424,6 +425,11 @@
       <div class="tip" id="tip"></div>
     </div>
     <div class="legend" id="rlegend"></div>
+  </div>
+
+  <div class="card">
+    <h2>期間サマリー</h2>
+    <div id="periodsummary"></div>
   </div>
 
   <div class="card">
@@ -513,6 +519,7 @@ function render(s) {
      "regime", "strategy"].forEach(id => setText(id, "—", ""));
     setText("cap", ""); setText("reason", "");
     document.getElementById("compo").innerHTML = "";
+    document.getElementById("periodsummary").innerHTML = "";
     document.getElementById("positions").innerHTML =
       '<div class="empty">データ待ち（トレーダーの初回ループがまだ完了していません）</div>';
     document.getElementById("universe").innerHTML =
@@ -524,6 +531,7 @@ function render(s) {
   renderStats(s.stats);
   renderErrors(s.errors);
   drawChart(s.curve, k ? k.capital : 1000000);
+  if (k) renderPeriodSummary(s.curve);
   setTabIdentity(s);
   // 静的配信では常駐サーバが無く、実際には「ファイルが作られた時刻」なので言い換える
   document.getElementById("foot").textContent = s.mode === "scheduled"
@@ -797,6 +805,38 @@ function symbolPnl(rows) {
     </tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
+/* 直近hours時間での資産の増減。「増減」棒グラフのdeltaを積み上げても
+   同じ値になるが、区間の起点と終点だけ見れば足りるのでここでは都度計算する。
+   起点は「カットオフ以降で最初に記録された点」。運用開始から日が浅く
+   その時点のデータが無い場合は、最古の記録を起点にした「開始からの」値として返す。 */
+function periodDelta(curve, hours) {
+  if (!curve || curve.length < 2) return null;
+  const cutoff = Date.now() - hours * 3600 * 1000;
+  const first = curve[0], last = curve[curve.length - 1];
+  const partial = parseTs(first.t) > cutoff;
+  const base = partial ? first : (curve.find(p => parseTs(p.t) >= cutoff) || first);
+  if (base === last) return null;
+  const delta = last.equity - base.equity;
+  const deltaPct = base.equity ? (last.equity / base.equity - 1) * 100 : 0;
+  return { delta, deltaPct, partial };
+}
+
+function renderPeriodSummary(curve) {
+  const box = document.getElementById("periodsummary");
+  const periods = [["直近7日", 24 * 7], ["直近30日", 24 * 30]];
+  const items = periods.map(([label, hours]) => {
+    const d = periodDelta(curve, hours);
+    if (!d) return `<div class="stat"><div class="k">${label}</div><div class="v">—</div></div>`;
+    const jp = (d.delta >= 0 ? "+" : "") + Math.round(d.delta).toLocaleString("ja-JP") + "円";
+    return `<div class="stat">
+        <div class="k">${label}${d.partial ? "（運用開始から）" : ""}</div>
+        <div class="v ${cls(d.delta)}">${jp} （${pct(d.deltaPct)}）</div>
+      </div>`;
+  });
+  box.innerHTML = '<div class="stats" style="border-top:none;padding-top:0;margin-top:0">'
+    + items.join("") + "</div>";
+}
+
 function renderTrades(trades) {
   const box = document.getElementById("trades");
   if (!trades || !trades.length) {
@@ -850,8 +890,8 @@ document.getElementById("ranges").addEventListener("click", e => {
   if (LAST) drawChart(LAST.curve, LAST.snapshot ? LAST.snapshot.capital : 1000000);
 });
 
-/* 表示モード。'line'=総資産の推移、'bar'=記録間隔ごとの増減。
-   将来 'bar-daily'（日次集約）を第3の値として足す想定。 */
+/* 表示モード。'line'=総資産の推移、'bar'=記録間隔ごとの増減、'dd'=ピーク比（ドローダウン）。
+   将来 'bar-daily'（日次集約）を追加の値として足す想定。 */
 let CHART_MODE = "line";
 document.getElementById("chartmode").addEventListener("click", e => {
   const b = e.target.closest("button");
@@ -914,6 +954,7 @@ function regimeRibbon(curve, X, ribbonY, RIBBON_H) {
    要素ごと消えるので、張り直し漏れの心配はない）。 */
 function drawChart(fullCurve, capital) {
   if (CHART_MODE === "bar") drawBarChart(fullCurve, capital);
+  else if (CHART_MODE === "dd") drawDrawdownChart(fullCurve, capital);
   else drawLineChart(fullCurve, capital);
 }
 
@@ -1090,6 +1131,85 @@ function drawBarChart(fullCurve, capital) {
   hit.addEventListener("mouseleave", hideTip);
 }
 
+/* ピーク比（ドローダウン）の推移。プラスにはならない指標なので、
+   0%を上端に固定して常に0以下の面を塗る（棒グラフの±0中心とは違う設計）。
+   dd_pct はサーバ側で間引き前の全履歴から計算済み（dashboard.py 参照）。 */
+function drawDrawdownChart(fullCurve, capital) {
+  const filtered = filterCurve(fullCurve);
+  const curve = (filtered || []).filter(p => p.dd_pct !== null && p.dd_pct !== undefined);
+  const W = svg.clientWidth || 800, H = 260;
+  const narrow = W < 460;
+  const m = { t: 12, r: 14, b: 44, l: narrow ? 50 : 74 };
+  const RIBBON_H = 8;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("height", H);
+
+  if (curve.length === 0) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle"
+      fill="var(--muted)" font-size="13">記録がまだありません</text>`;
+    PLOT = null;
+    renderRegimeLegend([]);
+    return;
+  }
+
+  let lo = Math.min(...curve.map(p => p.dd_pct), 0);
+  const hi = 0;
+  // ドローダウンがまだ小さい/無いときは、0%付近に潰れて見えないよう最小窓を確保する
+  if (hi - lo < 1) lo = -1;
+  lo -= (hi - lo) * 0.12;
+  const dec = (hi - lo) < 5 ? 2 : 1;
+
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const X = i => m.l + (curve.length === 1 ? iw / 2 : i / (curve.length - 1) * iw);
+  const Y = v => m.t + (1 - (v - lo) / (hi - lo)) * ih;
+
+  let g = `<defs>
+    <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="var(--bad)" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="var(--bad)" stop-opacity="0.30"/>
+    </linearGradient>
+  </defs>`;
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + (hi - lo) * i / 3, y = Y(v);
+    g += `<line x1="${m.l}" y1="${y}" x2="${W - m.r}" y2="${y}"
+           stroke="var(--grid)" stroke-width="1"/>`;
+    g += `<text x="${m.l - 8}" y="${y + 4}" text-anchor="end" fill="var(--muted)"
+           font-size="11">${v.toFixed(dec)}%</text>`;
+  }
+  const y0 = Y(0);
+  g += `<line x1="${m.l}" y1="${y0}" x2="${W - m.r}" y2="${y0}"
+         stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>`;
+
+  const pts = curve.map((p, i) => [X(i), Y(p.dd_pct)]);
+  const line = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  g += `<path d="${line} L ${pts[pts.length-1][0].toFixed(1)} ${y0.toFixed(1)} L ${pts[0][0].toFixed(1)} ${y0.toFixed(1)} Z"
+         fill="url(#ddGrad)"/>`;
+  g += `<path d="${line}" fill="none" stroke="var(--bad)" stroke-width="2"
+         stroke-linejoin="round" stroke-linecap="round"/>`;
+  if (pts.length === 1) {
+    g += `<circle cx="${pts[0][0].toFixed(1)}" cy="${pts[0][1].toFixed(1)}" r="4.5"
+           fill="var(--bad)" stroke="var(--surface)" stroke-width="2"/>`;
+  }
+
+  const ribbonY = m.t + ih + 6;
+  const ribbon = regimeRibbon(curve, X, ribbonY, RIBBON_H);
+  g += ribbon.svg;
+  g += timeAxisLabels(curve, X, W, H, m, narrow);
+
+  g += `<line id="cross" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}"
+         stroke="var(--axis)" stroke-width="1" opacity="0"/>`;
+  g += `<circle id="dot" r="4.5" fill="var(--bad)" stroke="var(--surface)"
+         stroke-width="2" opacity="0"/>`;
+  g += `<rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+  svg.innerHTML = g;
+
+  renderRegimeLegend(ribbon.seen);
+  PLOT = { curve, X, Y, m, iw, W, capital, mode: "dd" };
+  const hit = svg.querySelector("#hit");
+  hit.addEventListener("mousemove", onHoverDrawdown);
+  hit.addEventListener("mouseleave", hideTip);
+}
+
 /* イベントからバー/点のインデックスを引く共通処理。線・棒どちらも
    「x座標→最寄りのインデックス」という点では同じなので、ここだけ共有する。 */
 function hoverIndex(e) {
@@ -1150,6 +1270,27 @@ function onHoverBar(e) {
     ${p.regime ? `<div class="sub">${p.regime}</div>` : ""}`;
   tip.style.opacity = "1";
   const py = PLOT.Y(Math.max(0, d));
+  const left = px / scale + 14;
+  tip.style.left = Math.min(left, box.width - tip.offsetWidth - 8) + "px";
+  tip.style.top = (py / scale - 10) + "px";
+}
+
+function onHoverDrawdown(e) {
+  if (!PLOT) return;
+  const hit = hoverIndex(e);
+  if (!hit) return;
+  const { i, box, scale } = hit;
+  const p = PLOT.curve[i], px = PLOT.X(i), py = PLOT.Y(p.dd_pct);
+
+  const cross = svg.querySelector("#cross"), dot = svg.querySelector("#dot");
+  cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("opacity", "1");
+  dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.setAttribute("opacity", "1");
+
+  tip.innerHTML = `<div class="sub">${p.t}</div>
+    <div class="big ${p.dd_pct < 0 ? "bad" : ""}">${p.dd_pct.toFixed(2)}%</div>
+    <div class="sub">総資産 ${yen(p.equity)}</div>
+    ${p.regime ? `<div class="sub">${p.regime}</div>` : ""}`;
+  tip.style.opacity = "1";
   const left = px / scale + 14;
   tip.style.left = Math.min(left, box.width - tip.offsetWidth - 8) + "px";
   tip.style.top = (py / scale - 10) + "px";
