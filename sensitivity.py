@@ -127,7 +127,10 @@ def main() -> int:
         old = rs.ATR_MULT
         if v is not None:
             rs.ATR_MULT = v
-            RegimeSwitching.__init__.__defaults__ = (rs.MAX_WEIGHT, v, True)
+            # __defaults__ は右詰め（末尾の引数から）で対応する。4引数すべてを
+            # 渡さないと先頭(max_weight)の既定値が消えてTypeErrorになる
+            # （実際に踏んだバグ。3要素だけ渡すとmax_weightが必須引数化する）。
+            RegimeSwitching.__init__.__defaults__ = (rs.MAX_WEIGHT, v, True, regime_mod.COOLDOWN_DAYS)
         return old
     values = [2.0, 2.5, 3.0, 3.5, 4.0]
     calmars = sweep("■ ATRトレーリングストップの幅（ATRの何倍）", set_atr, values, panels, quiet=args.check)
@@ -137,7 +140,7 @@ def main() -> int:
         old = rs.MAX_WEIGHT
         if v is not None:
             rs.MAX_WEIGHT = v
-            RegimeSwitching.__init__.__defaults__ = (v, rs.ATR_MULT, True)
+            RegimeSwitching.__init__.__defaults__ = (v, rs.ATR_MULT, True, regime_mod.COOLDOWN_DAYS)
         return old
     values = [0.3, 0.4, 0.5, 0.6, 0.8]
     sweep("■ 1銘柄あたりの上限ウェイト", set_mw, values, panels, quiet=args.check)

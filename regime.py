@@ -62,16 +62,21 @@ ATR_N = 14
 ATR_MULT = 3.0
 
 
-def classify(closes: pd.DataFrame, *, high_vol: float = HIGH_VOL) -> dict:
+def classify(closes: pd.DataFrame, *, high_vol: float | None = None) -> dict:
     """
     closes: index=日付 / columns=銘柄 の終値（**今日まで**に切ってあること）。
     判定結果と、その根拠になった数値を返す。
 
     high_vol はシャドー判定（live_trade.py の _log_shadow_regime）が別の
-    閾値で同じ判定を再現するための差し替え口。実運用・バックテストは
-    どちらも既定値（モジュール定数 HIGH_VOL）のまま呼ぶので、この引数を
-    渡さない限り挙動は今まで通り変わらない。
+    閾値で同じ判定を再現するための差し替え口。省略時（None）は呼び出し時点の
+    モジュール変数 HIGH_VOL を毎回読みに行く——デフォルト引数（= HIGH_VOL）に
+    してしまうと import 時点の値がその場で固定されてしまい、sensitivity.py
+    が regime.HIGH_VOL を書き換えて再検査しても classify() 側には反映されない
+    まま（実際に踏んだバグ。感度分析が常に同じ結果を返し続けていた）。
     """
+    if high_vol is None:
+        high_vol = HIGH_VOL
+
     btc = closes[ANCHOR].dropna()
     price = float(btc.iloc[-1])
 
