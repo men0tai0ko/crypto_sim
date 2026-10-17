@@ -1,0 +1,22 @@
+{
+  "broker": {
+    "cash": 1146363.083649699,
+    "positions": {}
+  },
+  "peaks": {},
+  "targets": {},
+  "stopped": [
+    "BTC-JPY",
+    "ETH-JPY",
+    "SOL-JPY",
+    "XRP-JPY"
+  ],
+  "cooldown": {
+    "SOL-JPY": "2026-10-18",
+    "BTC-JPY": "2026-10-18"
+  },
+  "last_plan_date": "2026-10-17",
+  "started": "2026-08-05 08:17:50",
+  "peak_equity": 1254580.0858412082,
+  "updated": "2026-10-18 07:01:22"
+}
